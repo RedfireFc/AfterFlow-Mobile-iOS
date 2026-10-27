@@ -1,10 +1,10 @@
 #include "GJBaseGameLayer.hpp"
 #include "../renderer/Renderer.hpp"
 
-using namespace geode::prelude;
-
-class $modify(BismuthBaseGameLayer, GJBaseGameLayer) {
-    bool init() {
+namespace bismuth::decomp {
+    void GJBaseGameLayerHelper::initialize() {
+        auto renderer = Renderer::get();
+        if (renderer) {
         if (!GJBaseGameLayer::init()) {
             return false;
         }
@@ -43,5 +43,6 @@ class $modify(BismuthBaseGameLayer, GJBaseGameLayer) {
         
         // Update batching buffers following trigger processing
         bismuth::Renderer::get()->onProcessCommands(dt);
+        }
     }
-};
+}
