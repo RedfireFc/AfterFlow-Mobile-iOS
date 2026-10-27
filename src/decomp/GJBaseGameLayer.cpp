@@ -1,48 +1,29 @@
-#include "GJBaseGameLayer.hpp"
-#include "../renderer/Renderer.hpp"
+#include "Renderer.hpp"
 
-namespace bismuth::decomp {
-    void GJBaseGameLayerHelper::initialize() {
-        auto renderer = Renderer::get();
-        if (renderer) {
-        if (!GJBaseGameLayer::init()) {
-            return false;
-        }
-        // Reset Bismuth batch renderer state when a layer initializes
-        bismuth::Renderer::get()->resetState();
-        return true;
-    }
+using namespace geode::prelude;
 
-    void addObject(GameObject* obj) {
-        GJBaseGameLayer::addObject(obj);
-        
-        // Register newly instantiated objects in Bismuth's custom batch sorter
-        if (obj) {
-            bismuth::Renderer::get()->registerObject(obj);
-        }
-    }
+static Renderer* g_renderer = nullptr;
 
-    void removeObjectFromSection(GameObject* obj) {
-        GJBaseGameLayer::removeObjectFromSection(obj);
-        
-        // Unregister objects when removed from level sections
-        if (obj) {
-            bismuth::Renderer::get()->unregisterObject(obj);
-        }
-    }
+Ref<Renderer> Renderer::create(PlayLayer* layer) {
+    auto ren = new Renderer();
+    ren->layer = layer;
+    ren->autorelease();
+    g_renderer = ren;
+    return ren;
+}
 
-    void updateColor(cocos2d::ccColor3B const& color, float duration, int colorID, bool blending, float opacity, cocos2d::ccColor3B const& color2, bool p7, int p8) {
-        GJBaseGameLayer::updateColor(color, duration, colorID, blending, opacity, color2, p7, p8);
-        
-        // Pass updated color channel uniforms to Bismuth shaders in GD 2.208
-        bismuth::Renderer::get()->updateColorState(colorID, color);
-    }
+Ref<Renderer> Renderer::get() {
+    return g_renderer;
+}
 
-    void processCommands(float dt) {
-        GJBaseGameLayer::processCommands(dt);
-        
-        // Update batching buffers following trigger processing
-        bismuth::Renderer::get()->onProcessCommands(dt);
-        }
-    }
+void Renderer::update(float dt) {
+    (void)dt;
+}
+
+bool Renderer::isEnabled() const {
+    return enabled;
+}
+
+void Renderer::setEnabled(bool enabled) {
+    this->enabled = enabled;
 }
