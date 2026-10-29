@@ -242,6 +242,7 @@ namespace {
         bool waveMarginEnabled = true;
         bool feedbackEnabled = true;
         bool cantSaveFeedbackEnabled = true;
+        bool looseGroundSaves = true;
         int feedbackUnits = 0; // 0 = ticks, 1 = frames @ current fps, 2 = both
         double minBudgetMilliseconds = 3.0;
         bool modeCube = true, modeShip = true, modeWave = true, modeBall = true;
@@ -342,6 +343,9 @@ namespace {
     bool isQuickScore = false;
     bool isCrashFixed = false;
     bool isMarginUsed = false;
+    int lastFixTick = -1;
+    int lastFixDelay = 0;
+    int lastFixLanding = 0;
 
     void cycleStage(int direction);
     void toggleTerminal();
@@ -1750,6 +1754,7 @@ finally {
         state.waveMarginEnabled = Mod::get()->getSettingValue<bool>("wave-margin");
         state.feedbackEnabled = Mod::get()->getSettingValue<bool>("show-feedback");
         state.cantSaveFeedbackEnabled = Mod::get()->getSettingValue<bool>("show-cant-save");
+        state.looseGroundSaves = Mod::get()->getSettingValue<bool>("loose-ground-saves");
         {
             auto units = Mod::get()->getSettingValue<std::string>("feedback-units");
             state.feedbackUnits = units == "frames" ? 1 : units == "both" ? 2 : 0;
@@ -3112,6 +3117,19 @@ finally {
                               : searchDelay(playLayer, player1, player2, isDual, isDown, hasWave, horizonTicks, maxDelayTicks, releaseAfterTicks, baseDelay, &landingTick,
                                     isGroundPress);
 
+        if (savedTick <= 0 && isGroundPress && state.looseGroundSaves && clickMs() < state.budgetMilliseconds) {
+            // strict search wants the cube to land safely. if nothing does, accept any delay that gets clearly past
+            // the obstacle that would kill the raw click: raw is known to die, so this can only help.
+            int looseBestDelay = debugBestDelay;
+            int looseBestResult = debugBestResult;
+            savedTick = searchDelay(playLayer, player1, player2, isDual, isDown, false, horizonTicks, maxDelayTicks, releaseAfterTicks, baseDelay,
+                &landingTick, false);
+            if (savedTick <= 0) {
+                debugBestDelay = std::max(debugBestDelay, looseBestDelay);
+                debugBestResult = std::max(debugBestResult, looseBestResult);
+            }
+        }
+
         if (savedTick <= 0) {
             say("no save: {}{} dies in {}t (max {}t, best +{}t -> {}t of {})", isDown ? "press" : "release", tickTagText, baseDelay, maxDelayTicks,
                 debugBestDelay, debugBestResult, horizonTicks);
@@ -3145,6 +3163,9 @@ finally {
             isCubeStyleWave && isMarginUsed ? std::string("  +margin")
             : isRobotPress ? fmt::format("  hold {}t", robotUsedHoldTicks) : std::string());
         state.inputShiftTicks = savedTick;
+        lastFixTick = currentTick;
+        lastFixDelay = savedTick;
+        lastFixLanding = landingTick;
         if (state.feedbackEnabled) {
             double framesSaved = savedTick * currentFps() / 240.0;
             showFeedback(playLayer,
@@ -3288,6 +3309,16 @@ class $modify(BufPlayLayer, PlayLayer) {
         if (!playerObject || wasAlreadyDead || !playerObject->m_isDead) {
             return;
         }
+        if (lastFixTick >= 0 && playerObject == m_player1) {
+            int ticksSinceFix = currentTick - lastFixTick;
+            if (ticksSinceFix <= st(60)) {
+                say("fix failed: predicted +{}t (safe until {}t) but died {}t after the click - prediction mismatch", lastFixDelay, lastFixLanding, ticksSinceFix);
+                if (state.feedbackEnabled && state.cantSaveFeedbackEnabled) {
+                    showFeedback(this, "fix failed", false);
+                }
+            }
+        }
+        lastFixTick = -1;
         resetPending();
         state.hasAppliedInput = false;
         state.rapidInputTicks = 0;
@@ -3324,6 +3355,7 @@ class $modify(BufPlayLayer, PlayLayer) {
     }
 
     void resetLevel() {
+        lastFixTick = -1;
         resetPending();
         forgetPress();
         state.hasAppliedInput = false;
