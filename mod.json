@@ -7,7 +7,7 @@
     },
     "id": "afterflow.prsevend",
     "name": "Afterflow",
-    "version": "v2.2.0",
+    "version": "v2.3.0",
     "developer": "prsevend",
     "description": "a predictive input cheat that fixes your early clicks and makes them accurate.",
     "tags": [
@@ -163,23 +163,7 @@
         "android-title": {
             "type": "title",
             "name": "android",
-            "description": "android has no function keys or terminal, so the stage is picked here instead. the keybinds and terminal settings below only do something on pc"
-        },
-        "android-stage": {
-            "type": "string",
-            "name": "stage (android)",
-            "description": "prediction stage on android. 1 = 2 ticks ... 7 = 40 ticks, 8 = off. applies when you resume or enter a level. ignored on pc (use the cycle key there)",
-            "default": "4: 16t / 8t",
-            "one-of": [
-                "1: 2t / 2t",
-                "2: 4t / 4t",
-                "3: 8t / 8t",
-                "4: 16t / 8t",
-                "5: 24t / 12t",
-                "6: 32t / 16t",
-                "7: 40t / 20t",
-                "8: off"
-            ]
+            "description": "android has no function keys or terminal. open the level pause menu and tap the afterflow (AF) button to pick the stage and toggle gamemodes. the keybinds and terminal settings below only do something on pc"
         },
         "keybinds-title": {
             "type": "title",

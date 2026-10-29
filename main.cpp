@@ -9,6 +9,7 @@
 #include <Geode/ui/Notification.hpp>
 #include <Geode/ui/Popup.hpp>
 #include <Geode/modify/MenuLayer.hpp>
+#include <Geode/modify/PauseLayer.hpp>
 #include <Geode/modify/EffectGameObject.hpp>
 #include <Geode/modify/GJBaseGameLayer.hpp>
 #include <Geode/modify/GameObject.hpp>
@@ -1793,19 +1794,6 @@ finally {
         state.waveMarginEnabled = Mod::get()->getSettingValue<bool>("wave-margin");
         state.feedbackEnabled = Mod::get()->getSettingValue<bool>("show-feedback");
         state.cantSaveFeedbackEnabled = Mod::get()->getSettingValue<bool>("show-cant-save");
-#ifdef GEODE_IS_ANDROID
-        {
-            // no function keys on a phone, so the stage comes from the "stage (android)" setting
-            auto stageName = Mod::get()->getSettingValue<std::string>("android-stage");
-            constexpr char const* STAGE_NAMES[] = { "1: 2t / 2t", "2: 4t / 4t", "3: 8t / 8t", "4: 16t / 8t", "5: 24t / 12t", "6: 32t / 16t", "7: 40t / 20t", "8: off" };
-            for (int stageNumber = 0; stageNumber < STAGE_TABLE_SIZE; ++stageNumber) {
-                if (stageName == STAGE_NAMES[stageNumber]) {
-                    state.stageIndex = stageNumber;
-                    break;
-                }
-            }
-        }
-#endif
         state.looseGroundSaves = Mod::get()->getSettingValue<bool>("loose-ground-saves");
         {
             auto units = Mod::get()->getSettingValue<std::string>("feedback-units");
@@ -3243,7 +3231,7 @@ finally {
 
     void startCycleWatcher() {
 #ifdef GEODE_IS_ANDROID
-        return; // no keyboard / host terminal on android, stage comes from the mod setting
+        return; // no keyboard / host terminal on android, stage comes from the pause menu panel
 #endif
         std::error_code errorCode;
         std::filesystem::remove(cycleTriggerPath(), errorCode);
@@ -3310,12 +3298,235 @@ finally {
             state.inputShiftTicks = 0;
         }
     }
+
+    // one place that names a stage, so every ui and log line agrees (e.g. "4: 16t / 8t")
+    std::string stageLabel(int stageNumber) {
+        auto const& stageDefinition = STAGE_TABLE[stageNumber];
+        if (!stageDefinition.isEnabled) {
+            return fmt::format("{}: off", stageNumber + 1);
+        }
+        return fmt::format("{}: {}t / {}t", stageNumber + 1, stageDefinition.ticksAllModes, stageDefinition.ticksWaveMode);
+    }
+
+    // sets, saves and applies a stage. used by the android panel
+    void setStageIndex(int stageNumber) {
+        state.stageIndex = ((stageNumber % STAGE_TABLE_SIZE) + STAGE_TABLE_SIZE) % STAGE_TABLE_SIZE;
+        Mod::get()->setSavedValue("stage", state.stageIndex);
+        resetPending();
+        applyStage();
+    }
+
+#ifdef GEODE_IS_ANDROID
+    // android has no function keys or terminal, so this panel (opened from a button in the pause menu)
+    // is the android replacement for the cycle key. it edits the same mod settings the settings page uses
+    class AfterflowPanel : public FLAlertLayer {
+    protected:
+        struct ToggleEntry {
+            char const* settingKey;
+            char const* title;
+        };
+
+        static constexpr ToggleEntry MODE_ENTRIES[8] = {
+            { "mode-cube", "cube" },
+            { "mode-ship", "ship" },
+            { "mode-wave", "wave" },
+            { "mode-ball", "ball" },
+            { "mode-ufo", "ufo" },
+            { "mode-spider", "spider" },
+            { "mode-robot", "robot" },
+            { "mode-swing", "swing" },
+        };
+        static constexpr ToggleEntry OPTION_ENTRIES[4] = {
+            { "loose-ground-saves", "loose ground saves" },
+            { "wave-margin", "wave safety margin" },
+            { "show-feedback", "show fixed text" },
+            { "show-cant-save", "show can't save text" },
+        };
+
+        CCLabelBMFont* m_stageName = nullptr;
+        CCLabelBMFont* m_stageInfo = nullptr;
+
+        static void fitLabel(CCLabelBMFont* label, float maxWidth, float baseScale) {
+            label->setScale(baseScale);
+            float width = label->getContentSize().width * baseScale;
+            if (width > maxWidth) {
+                label->setScale(baseScale * maxWidth / width);
+            }
+        }
+
+        void refreshStage() {
+            m_stageName->setString(stageLabel(state.stageIndex).c_str());
+            fitLabel(m_stageName, 190.f, 0.7f);
+            if (!state.isEnabled) {
+                m_stageInfo->setString("100% raw input");
+            }
+            else {
+                double framesPerTick = currentFps() / 240.0;
+                m_stageInfo->setString(fmt::format("{:.1f}f all | {:.1f}f wave @ {:.0f}fps",
+                    state.ticksAllModes * framesPerTick, state.ticksWaveMode * framesPerTick, currentFps()).c_str());
+            }
+            fitLabel(m_stageInfo, 230.f, 0.45f);
+        }
+
+        void addToggle(CCNode* content, ToggleEntry const& entry, float x, float y, int tag) {
+            auto offSprite = CCSprite::createWithSpriteFrameName("GJ_checkOff_001.png");
+            auto onSprite = CCSprite::createWithSpriteFrameName("GJ_checkOn_001.png");
+            offSprite->setScale(0.7f);
+            onSprite->setScale(0.7f);
+            auto toggler = CCMenuItemToggler::create(offSprite, onSprite, this, menu_selector(AfterflowPanel::onToggle));
+            toggler->setTag(tag);
+            toggler->setPosition({ x, y });
+            toggler->toggle(Mod::get()->getSettingValue<bool>(entry.settingKey));
+            m_buttonMenu->addChild(toggler);
+
+            auto label = CCLabelBMFont::create(entry.title, "bigFont.fnt");
+            label->setAnchorPoint({ 0.f, 0.5f });
+            label->setPosition({ x + 17.f, y });
+            fitLabel(label, 128.f, 0.4f);
+            content->addChild(label);
+        }
+
+        bool init() {
+            if (!FLAlertLayer::init(150)) {
+                return false;
+            }
+            m_noElasticity = true;
+
+            auto winSize = CCDirector::get()->getWinSize();
+            constexpr float PANEL_WIDTH = 380.f;
+            constexpr float PANEL_HEIGHT = 270.f;
+            constexpr float COLUMN_LEFT = -168.f;
+            constexpr float COLUMN_RIGHT = 14.f;
+
+            m_mainLayer = CCLayer::create();
+            this->addChild(m_mainLayer);
+
+            auto content = CCNode::create();
+            content->setPosition({ winSize.width / 2, winSize.height / 2 });
+            m_mainLayer->addChild(content);
+
+            auto background = CCScale9Sprite::create("GJ_square01.png");
+            background->setContentSize({ PANEL_WIDTH, PANEL_HEIGHT });
+            content->addChild(background, -1);
+
+            m_buttonMenu = CCMenu::create();
+            m_buttonMenu->setPosition({ winSize.width / 2, winSize.height / 2 });
+            m_mainLayer->addChild(m_buttonMenu, 10);
+
+            auto title = CCLabelBMFont::create("Afterflow", "goldFont.fnt");
+            title->setScale(0.8f);
+            title->setPosition({ 0.f, 116.f });
+            content->addChild(title);
+
+            // stage picker
+            auto leftSprite = CCSprite::createWithSpriteFrameName("GJ_arrow_01_001.png");
+            leftSprite->setScale(0.8f);
+            auto leftButton = CCMenuItemSpriteExtra::create(leftSprite, this, menu_selector(AfterflowPanel::onPreviousStage));
+            leftButton->setPosition({ -120.f, 84.f });
+            m_buttonMenu->addChild(leftButton);
+
+            auto rightSprite = CCSprite::createWithSpriteFrameName("GJ_arrow_01_001.png");
+            rightSprite->setFlipX(true);
+            rightSprite->setScale(0.8f);
+            auto rightButton = CCMenuItemSpriteExtra::create(rightSprite, this, menu_selector(AfterflowPanel::onNextStage));
+            rightButton->setPosition({ 120.f, 84.f });
+            m_buttonMenu->addChild(rightButton);
+
+            m_stageName = CCLabelBMFont::create("", "bigFont.fnt");
+            m_stageName->setPosition({ 0.f, 90.f });
+            content->addChild(m_stageName);
+            m_stageInfo = CCLabelBMFont::create("", "chatFont.fnt");
+            m_stageInfo->setPosition({ 0.f, 68.f });
+            content->addChild(m_stageInfo);
+            refreshStage();
+
+            // gamemodes
+            auto modesTitle = CCLabelBMFont::create("gamemodes", "goldFont.fnt");
+            modesTitle->setScale(0.5f);
+            modesTitle->setPosition({ 0.f, 48.f });
+            content->addChild(modesTitle);
+            for (int entryIndex = 0; entryIndex < 8; ++entryIndex) {
+                float columnX = entryIndex % 2 == 0 ? COLUMN_LEFT : COLUMN_RIGHT;
+                float rowY = 26.f - static_cast<float>(entryIndex / 2) * 22.f;
+                addToggle(content, MODE_ENTRIES[entryIndex], columnX, rowY, entryIndex);
+            }
+
+            // options
+            auto optionsTitle = CCLabelBMFont::create("options", "goldFont.fnt");
+            optionsTitle->setScale(0.5f);
+            optionsTitle->setPosition({ 0.f, -64.f });
+            content->addChild(optionsTitle);
+            for (int entryIndex = 0; entryIndex < 4; ++entryIndex) {
+                float columnX = entryIndex % 2 == 0 ? COLUMN_LEFT : COLUMN_RIGHT;
+                float rowY = -84.f - static_cast<float>(entryIndex / 2) * 22.f;
+                addToggle(content, OPTION_ENTRIES[entryIndex], columnX, rowY, 100 + entryIndex);
+            }
+
+            auto doneButton = CCMenuItemSpriteExtra::create(ButtonSprite::create("Done", 80, true, "goldFont.fnt", "GJ_button_01.png", 30.f, 0.7f), this, menu_selector(AfterflowPanel::onClose));
+            doneButton->setPosition({ 0.f, -PANEL_HEIGHT / 2 + 2.f });
+            m_buttonMenu->addChild(doneButton);
+
+            this->setTouchEnabled(true);
+            this->setKeypadEnabled(true);
+            return true;
+        }
+
+        void onPreviousStage(CCObject*) {
+            setStageIndex(state.stageIndex - 1);
+            say("pause menu -> {}", stageBanner());
+            refreshStage();
+        }
+
+        void onNextStage(CCObject*) {
+            setStageIndex(state.stageIndex + 1);
+            say("pause menu -> {}", stageBanner());
+            refreshStage();
+        }
+
+        void onToggle(CCObject* sender) {
+            auto* toggler = static_cast<CCMenuItemToggler*>(sender);
+            int tag = toggler->getTag();
+            ToggleEntry const& entry = tag >= 100 ? OPTION_ENTRIES[tag - 100] : MODE_ENTRIES[tag];
+            // the callback runs before the toggler flips, so the new value is the opposite of what it shows now
+            bool newValue = !toggler->isToggled();
+            Mod::get()->setSettingValue<bool>(entry.settingKey, newValue);
+            say("pause menu -> {} {}", entry.title, newValue ? "on" : "off");
+        }
+
+        void onClose(CCObject*) {
+            this->setKeypadEnabled(false);
+            this->setTouchEnabled(false);
+            this->removeFromParentAndCleanup(true);
+        }
+
+        void keyBackClicked() override {
+            this->onClose(nullptr);
+        }
+
+    public:
+        static AfterflowPanel* create() {
+            auto* panel = new AfterflowPanel();
+            if (panel && panel->init()) {
+                panel->autorelease();
+                return panel;
+            }
+            CC_SAFE_DELETE(panel);
+            return nullptr;
+        }
+    };
+#endif
 }
 
 $on_mod(Loaded) {
 
     constexpr int STAGE_SCHEMA_VERSION = 2;
-    int savedStageIndex = std::clamp(Mod::get()->getSavedValue<int>("stage", 0), 0, STAGE_TABLE_SIZE - 1);
+#ifdef GEODE_IS_ANDROID
+    constexpr int DEFAULT_STAGE_INDEX = 3; // stage 4, same default the old android setting had
+#else
+    constexpr int DEFAULT_STAGE_INDEX = 0;
+#endif
+    int rawSavedStage = Mod::get()->getSavedValue<int>("stage", -1);
+    int savedStageIndex = rawSavedStage < 0 ? DEFAULT_STAGE_INDEX : std::clamp(rawSavedStage, 0, STAGE_TABLE_SIZE - 1);
     if (Mod::get()->getSavedValue<int>("stage-schema", 1) < STAGE_SCHEMA_VERSION) {
         if (savedStageIndex == 6) {
             savedStageIndex = STAGE_TABLE_SIZE - 1;
@@ -3339,8 +3550,12 @@ $on_mod(Loaded) {
     });
 #endif
     say("starting mode: {}", stageBanner());
+#ifdef GEODE_IS_ANDROID
+    say("stage is picked from the afterflow button in the pause menu: 2/2 -> 4/4 -> 8/8 -> 16/8 -> 24/12 -> 32/16 -> 40/20 -> off");
+#else
     say("{} in-level cycles: 2/2 -> 4/4 -> 8/8 -> 16/8 -> 24/12 -> 32/16 -> 40/20 -> off", stageKey());
     say("{} toggles the terminal", terminalKey());
+#endif
     say("host os: {} ({})", hostOSName(), hostOSDescription());
     checkForUpdates(true);
 }
@@ -3392,7 +3607,11 @@ class $modify(BufPlayLayer, PlayLayer) {
         state.ghostPlayer1 = makeGhost(this);
         state.ghostPlayer2 = makeGhost(this);
         state.ghostLayerBaseIndex = state.ghostRenderLayer->getChildrenCount();
+#ifdef GEODE_IS_ANDROID
+        say("buffer ready | {} | pause menu button", stageText());
+#else
         say("buffer ready | {} | {} cycles", stageText(), stageKey());
+#endif
         checkForUpdates(false);
         state.hasRealInput = false;
         state.hasAppliedInput = false;
@@ -3449,6 +3668,38 @@ class $modify(BufPlayLayer, PlayLayer) {
         PlayLayer::playEndAnimationToPos(targetPosition);
     }
 };
+
+#ifdef GEODE_IS_ANDROID
+// android only: adds an afterflow button to the level pause menu that opens the stage / gamemode panel
+class $modify(BufPauseLayer, PauseLayer) {
+    void customSetup() {
+        PauseLayer::customSetup();
+
+        auto label = CCLabelBMFont::create("AF", "bigFont.fnt");
+        label->setScale(0.8f);
+        auto buttonSprite = CircleButtonSprite::create(label, CircleBaseColor::Pink, CircleBaseSize::Medium);
+        auto button = CCMenuItemSpriteExtra::create(buttonSprite, this, menu_selector(BufPauseLayer::onAfterflow));
+        button->setID("afterflow-button"_spr);
+
+        if (auto rightMenu = this->getChildByID("right-button-menu")) {
+            rightMenu->addChild(button);
+            rightMenu->updateLayout();
+        }
+        else {
+            auto winSize = CCDirector::get()->getWinSize();
+            auto fallbackMenu = CCMenu::create();
+            fallbackMenu->setPosition({ winSize.width - 34.f, 34.f });
+            fallbackMenu->addChild(button);
+            button->setPosition({ 0.f, 0.f });
+            this->addChild(fallbackMenu, 10);
+        }
+    }
+
+    void onAfterflow(CCObject*) {
+        AfterflowPanel::create()->show();
+    }
+};
+#endif
 
 class $modify(BufMenuLayer, MenuLayer) {
     bool init() {
