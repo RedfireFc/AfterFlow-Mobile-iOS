@@ -399,10 +399,13 @@ namespace {
         Windows,
         Linux,
         Mac,
+        Android,
     };
 
     HostOS hostOS() {
-#ifdef GEODE_IS_MACOS
+#if defined(GEODE_IS_ANDROID)
+        return HostOS::Android;
+#elif defined(GEODE_IS_MACOS)
         return HostOS::Mac;
 #else
         static HostOS const hostOperatingSystem = geode::utils::platform::isWine() ? HostOS::Linux : HostOS::Windows;
@@ -414,6 +417,7 @@ namespace {
         switch (hostOS()) {
             case HostOS::Linux: return "linux";
             case HostOS::Mac: return "macos";
+            case HostOS::Android: return "android";
             default: return "windows";
         }
     }
@@ -421,6 +425,7 @@ namespace {
     char const* hostOSDescription() {
         switch (hostOS()) {
             case HostOS::Linux: return "proton/wine";
+            case HostOS::Android: return "native (touch)";
             case HostOS::Mac: return "native";
             default: return "native";
         }
@@ -509,6 +514,9 @@ namespace {
     }
 
     void writeTerminalFlags() {
+#ifdef GEODE_IS_ANDROID
+        return;
+#endif
         if (hostOS() != HostOS::Linux) {
             return;
         }
@@ -991,6 +999,9 @@ finally {
     }
 
     void writeTerminalScript() {
+#ifdef GEODE_IS_ANDROID
+        return;
+#endif
         if (hostOS() == HostOS::Linux) {
             writeWineTerminalScript();
         }
@@ -1012,6 +1023,9 @@ finally {
 #endif
 
     void removeLegacyTerminalLogs() {
+#ifdef GEODE_IS_ANDROID
+        return;
+#endif
         if (hostOS() == HostOS::Mac) {
             return;
         }
@@ -1043,6 +1057,9 @@ finally {
 #endif
 
     void resetTerminalLog() {
+#ifdef GEODE_IS_ANDROID
+        return;
+#endif
         writeTerminalFlags();
         if (hostOS() == HostOS::Linux) {
             ensureWineRuntimeDir();
@@ -1095,6 +1112,10 @@ finally {
     }
 
     void appendTerminalLog(std::string const& message) {
+#ifdef GEODE_IS_ANDROID
+        log::info("[afterflow] {}", message);
+        return;
+#endif
         if (hostOS() == HostOS::Linux || hostOS() == HostOS::Mac) {
             std::ofstream outputFile(terminalLogPath(), std::ios::app);
             if (outputFile) {
@@ -1120,6 +1141,9 @@ finally {
     }
 
     std::string keybindList(std::string_view settingName) {
+#ifdef GEODE_IS_ANDROID
+        return "n/a";
+#endif
         auto keybinds = Mod::get()->getSettingValue<std::vector<Keybind>>(settingName);
         if (keybinds.empty()) {
             return "unbound";
@@ -1143,11 +1167,17 @@ finally {
     }
 
     void finishKeybindIntro() {
+#ifdef GEODE_IS_ANDROID
+        return;
+#endif
         Mod::get()->setSavedValue(KEYBIND_INTRO_DONE, true);
         (void)Mod::get()->saveData();
     }
 
     bool showKeybindIntro() {
+#ifdef GEODE_IS_ANDROID
+        return false;
+#endif
         if (Mod::get()->getSavedValue<bool>(KEYBIND_INTRO_DONE, false)) {
             return false;
         }
@@ -1199,6 +1229,9 @@ finally {
     }
 
     void setupKeybinds() {
+#ifdef GEODE_IS_ANDROID
+        return;
+#endif
         listenForKeybindSettingPresses(KEYBIND_STAGE, [](Keybind const&, bool isDown, bool isRepeat, double) {
             if (isDown && !isRepeat && GameManager::get()->m_playLayer) {
                 cycleStage(1);
@@ -1573,6 +1606,9 @@ finally {
 #endif
 
     void closeTerminal() {
+#ifdef GEODE_IS_ANDROID
+        return;
+#endif
         if (hostOS() == HostOS::Linux) {
             ensureWineRuntimeDir();
             auto closePath = wineRuntimeDir() / "close";
@@ -1623,6 +1659,9 @@ finally {
     }
 
     void toggleTerminal() {
+#ifdef GEODE_IS_ANDROID
+        return;
+#endif
         if (!isTerminalEnabled()) {
             log::info("terminal toggle ignored (disabled)");
             return;
@@ -1754,6 +1793,19 @@ finally {
         state.waveMarginEnabled = Mod::get()->getSettingValue<bool>("wave-margin");
         state.feedbackEnabled = Mod::get()->getSettingValue<bool>("show-feedback");
         state.cantSaveFeedbackEnabled = Mod::get()->getSettingValue<bool>("show-cant-save");
+#ifdef GEODE_IS_ANDROID
+        {
+            // no function keys on a phone, so the stage comes from the "stage (android)" setting
+            auto stageName = Mod::get()->getSettingValue<std::string>("android-stage");
+            constexpr char const* STAGE_NAMES[] = { "1: 2t / 2t", "2: 4t / 4t", "3: 8t / 8t", "4: 16t / 8t", "5: 24t / 12t", "6: 32t / 16t", "7: 40t / 20t", "8: off" };
+            for (int stageNumber = 0; stageNumber < STAGE_TABLE_SIZE; ++stageNumber) {
+                if (stageName == STAGE_NAMES[stageNumber]) {
+                    state.stageIndex = stageNumber;
+                    break;
+                }
+            }
+        }
+#endif
         state.looseGroundSaves = Mod::get()->getSettingValue<bool>("loose-ground-saves");
         {
             auto units = Mod::get()->getSettingValue<std::string>("feedback-units");
@@ -3190,6 +3242,9 @@ finally {
     }
 
     void startCycleWatcher() {
+#ifdef GEODE_IS_ANDROID
+        return; // no keyboard / host terminal on android, stage comes from the mod setting
+#endif
         std::error_code errorCode;
         std::filesystem::remove(cycleTriggerPath(), errorCode);
         try {
@@ -3275,12 +3330,14 @@ $on_mod(Loaded) {
     resetTerminalLog();
     startCycleWatcher();
     setupKeybinds();
+#ifndef GEODE_IS_ANDROID
     listenForSettingChanges<bool>("terminal-enabled", [](bool enabled) {
         writeTerminalFlags();
         if (!enabled) {
             closeTerminal();
         }
     });
+#endif
     say("starting mode: {}", stageBanner());
     say("{} in-level cycles: 2/2 -> 4/4 -> 8/8 -> 16/8 -> 24/12 -> 32/16 -> 40/20 -> off", stageKey());
     say("{} toggles the terminal", terminalKey());
@@ -3375,6 +3432,7 @@ class $modify(BufPlayLayer, PlayLayer) {
 
     void resume() {
         readSettings();
+        applyStage();
         resetPending();
         state.rapidInputTicks = 0;
         state.ticksSinceInput = 999;
