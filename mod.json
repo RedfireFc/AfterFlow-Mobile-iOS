@@ -26,6 +26,23 @@
             "description": "allow the terminal key to open the afterflow log window",
             "default": true
         },
+        "gameplay-title": {
+            "type": "title",
+            "name": "gameplay",
+            "description": "how afterflow behaves in level"
+        },
+        "wave-margin": {
+            "type": "bool",
+            "name": "wave safety margin",
+            "description": "adds 1 extra tick of delay in wave when there is room. safer but can feel late. off = earliest safe click",
+            "default": false
+        },
+        "show-feedback": {
+            "type": "bool",
+            "name": "show feedback",
+            "description": "shows a small text at the top of the level when afterflow fixes a click (green) or cant save it (red)",
+            "default": true
+        },
         "keybinds-title": {
             "type": "title",
             "name": "keybinds",
@@ -36,14 +53,18 @@
             "name": "cycle stages",
             "description": "cycle prediction stages",
             "category": "gameplay",
-            "default": ["F6"]
+            "default": [
+                "F6"
+            ]
         },
         "keybind-terminal": {
             "type": "keybind",
             "name": "terminal",
             "description": "open or close the afterflow terminal",
             "category": "universal",
-            "default": ["F9"]
+            "default": [
+                "F9"
+            ]
         }
     }
 }
