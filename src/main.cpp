@@ -240,6 +240,7 @@ namespace {
         bool wasAutoReleased = false;
         int spamGapTicks = 16;
         bool waveMarginEnabled = true;
+        bool feedbackEnabled = true;
         bool waveVersion46Mode = false;
         bool orbAlignEnabled = true;
         bool orbAlignToGround = false;
@@ -1743,7 +1744,8 @@ finally {
         state.robotAutoReleaseEnabled = false;
         state.autoNormalRunsEnabled = false;
         state.waveVersion46Mode = false;
-        state.waveMarginEnabled = true;
+        state.waveMarginEnabled = Mod::get()->getSettingValue<bool>("wave-margin");
+        state.feedbackEnabled = Mod::get()->getSettingValue<bool>("show-feedback");
         state.orbWindowTicks = 6;
         state.performanceMode = false;
         state.userBudgetMilliseconds = 8.0;
@@ -1855,6 +1857,29 @@ finally {
             auto* childNode = static_cast<CCNode*>(childArray->lastObject());
             state.ghostRenderLayer->removeChild(childNode, true);
         }
+    }
+
+    void showFeedback(PlayLayer* gameLayer, std::string const& text, bool isGood) {
+        if (!state.feedbackEnabled || !gameLayer) {
+            return;
+        }
+        constexpr char const* FEEDBACK_ID = "afterflow-feedback";
+        auto* label = typeinfo_cast<CCLabelBMFont*>(gameLayer->getChildByID(FEEDBACK_ID));
+        if (!label) {
+            label = CCLabelBMFont::create(text.c_str(), "bigFont.fnt");
+            label->setID(FEEDBACK_ID);
+            label->setScale(0.35f);
+            auto winSize = CCDirector::get()->getWinSize();
+            label->setPosition({ winSize.width / 2.f, winSize.height - 22.f });
+            gameLayer->addChild(label, 1000);
+        }
+        else {
+            label->setString(text.c_str());
+            label->stopAllActions();
+        }
+        label->setColor(isGood ? ccColor3B{ 120, 255, 140 } : ccColor3B{ 255, 110, 110 });
+        label->setOpacity(255);
+        label->runAction(CCSequence::create(CCDelayTime::create(0.5f), CCFadeOut::create(0.25f), nullptr));
     }
 
     void sendButton(PlayLayer* gameLayer, bool isDown) {
@@ -2962,7 +2987,7 @@ finally {
         if (hasWave) {
             horizonTicks = fullWaveHorizon(isMini);
         }
-        int maxDelayTicks = st(hasWave ? state.ticksWaveMode : (hasShip ? std::clamp(state.shipMaxDelayTicks, 0, 16) : state.ticksAllModes));
+        int maxDelayTicks = st(hasWave ? state.ticksWaveMode : (hasShip ? std::max(std::min(state.ticksAllModes, 8), std::clamp(state.shipMaxDelayTicks, 0, 16)) : state.ticksAllModes));
         if (maxDelayTicks <= 0) {
             state.hasAppliedInput = isDown;
             return false;
@@ -3040,6 +3065,7 @@ finally {
         if (savedTick <= 0) {
             say("no save: {}{} dies in {}t (max {}t, best +{}t -> {}t of {})", isDown ? "press" : "release", tickTagText, baseDelay, maxDelayTicks,
                 debugBestDelay, debugBestResult, horizonTicks);
+            showFeedback(playLayer, "can't save", false);
             state.hasAppliedInput = isDown;
             return false;
         }
@@ -3067,6 +3093,7 @@ finally {
             isCubeStyleWave && isMarginUsed ? std::string("  +margin")
             : isRobotPress ? fmt::format("  hold {}t", robotUsedHoldTicks) : std::string());
         state.inputShiftTicks = savedTick;
+        showFeedback(playLayer, fmt::format("fixed +{}t", savedTick), true);
         queueInput(savedTick - earlyTicks, isDown);
         return true;
     }
