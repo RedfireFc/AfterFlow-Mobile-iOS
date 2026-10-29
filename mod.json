@@ -37,6 +37,12 @@
             "description": "adds 1 extra tick of delay in wave when there is room. safer but can feel late. off = earliest safe click",
             "default": false
         },
+        "loose-ground-saves": {
+            "type": "bool",
+            "name": "loose ground saves",
+            "description": "if no delay makes the cube land safely, still accept a delay that gets it past the obstacle that would have killed the raw click. more saves, slightly less strict",
+            "default": true
+        },
         "modes-title": {
             "type": "title",
             "name": "gamemodes",
