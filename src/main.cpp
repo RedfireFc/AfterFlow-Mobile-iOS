@@ -241,6 +241,11 @@ namespace {
         int spamGapTicks = 16;
         bool waveMarginEnabled = true;
         bool feedbackEnabled = true;
+        bool cantSaveFeedbackEnabled = true;
+        int feedbackUnits = 0; // 0 = ticks, 1 = frames @ current fps, 2 = both
+        double minBudgetMilliseconds = 3.0;
+        bool modeCube = true, modeShip = true, modeWave = true, modeBall = true;
+        bool modeUfo = true, modeSpider = true, modeRobot = true, modeSwing = true;
         bool waveVersion46Mode = false;
         bool orbAlignEnabled = true;
         bool orbAlignToGround = false;
@@ -1701,8 +1706,6 @@ finally {
 
     void readSettings() {
         state.smartEnabled = true;
-        state.budgetMilliseconds = 8.0;
-        state.automaticBudget = true;
         state.practiceModeOnly = false;
         state.groundHorizonTicks = 130;
         state.waveHorizonTicks = 65;
@@ -1730,7 +1733,7 @@ finally {
         state.moreTimeEnabled = false;
         state.dashAutoReleaseEnabled = false;
         state.performanceLogEnabled = false;
-        state.shipBufferEnabled = true;
+        state.shipBufferEnabled = true; // overwritten below from the mode-ship setting
         state.lateCrashTicks = 90;
         state.robustSaveMode = false;
         state.ignoreTouchingObjects = true;
@@ -1746,41 +1749,72 @@ finally {
         state.waveVersion46Mode = false;
         state.waveMarginEnabled = Mod::get()->getSettingValue<bool>("wave-margin");
         state.feedbackEnabled = Mod::get()->getSettingValue<bool>("show-feedback");
+        state.cantSaveFeedbackEnabled = Mod::get()->getSettingValue<bool>("show-cant-save");
+        {
+            auto units = Mod::get()->getSettingValue<std::string>("feedback-units");
+            state.feedbackUnits = units == "frames" ? 1 : units == "both" ? 2 : 0;
+        }
+        state.automaticBudget = Mod::get()->getSettingValue<bool>("auto-budget");
+        state.minBudgetMilliseconds = std::clamp(Mod::get()->getSettingValue<double>("min-search-ms"), 0.5, 10.0);
+        state.modeCube = Mod::get()->getSettingValue<bool>("mode-cube");
+        state.modeShip = Mod::get()->getSettingValue<bool>("mode-ship");
+        state.modeWave = Mod::get()->getSettingValue<bool>("mode-wave");
+        state.modeBall = Mod::get()->getSettingValue<bool>("mode-ball");
+        state.modeUfo = Mod::get()->getSettingValue<bool>("mode-ufo");
+        state.modeSpider = Mod::get()->getSettingValue<bool>("mode-spider");
+        state.modeRobot = Mod::get()->getSettingValue<bool>("mode-robot");
+        state.modeSwing = Mod::get()->getSettingValue<bool>("mode-swing");
         state.orbWindowTicks = 6;
         state.performanceMode = false;
-        state.userBudgetMilliseconds = 8.0;
+        state.userBudgetMilliseconds = std::clamp(Mod::get()->getSettingValue<double>("max-search-ms"), state.minBudgetMilliseconds, 30.0);
+        state.budgetMilliseconds = state.userBudgetMilliseconds;
+        state.shipBufferEnabled = state.modeShip;
         state.wasAutoReleased = false;
         state.consoleEnabled = false;
         state.showPathEnabled = false;
     }
 
-    // frame interval in ms of the current fps cap (falls back to 60fps if the director reports something odd)
+    // real frame time in ms. uses the fps cap when the game reports a sane one, but also looks at the last
+    // measured frame so "unlimited" fps (cap reports 0 or something tiny) and 1000+ fps both work.
     double frameIntervalMs() {
         auto* cocosDirector = CCDirector::get();
-        double intervalMs = cocosDirector ? cocosDirector->getAnimationInterval() * 1000.0 : 0.0;
-        if (!(intervalMs > 0.5 && intervalMs < 100.0)) {
+        if (!cocosDirector) {
             return 1000.0 / 60.0;
         }
-        return intervalMs;
+        double capMs = cocosDirector->getAnimationInterval() * 1000.0;
+        double measuredMs = cocosDirector->getDeltaTime() * 1000.0;
+        bool capOk = capMs > 0.05 && capMs < 100.0;
+        bool measuredOk = measuredMs > 0.05 && measuredMs < 250.0;
+        if (capOk && measuredOk) {
+            return std::min(capMs, measuredMs);
+        }
+        if (capOk) {
+            return capMs;
+        }
+        if (measuredOk) {
+            return std::min(measuredMs, 100.0);
+        }
+        return 1000.0 / 60.0;
     }
 
     double currentFps() {
         return 1000.0 / frameIntervalMs();
     }
 
-    // the search runs inside the click handler, so at high fps a fixed 8ms budget stalls several frames.
-    // scale the budget to the frame time (never below 3ms so the search can still finish) and keep the old
-    // "game is lagging, back off" cap.
+    // the search runs inside the click handler, so at high fps a fixed 8ms budget stalls many frames.
+    // scale the budget to the frame time but keep a floor (min-search-ms) so the search can still finish,
+    // and back off further when the game is already lagging.
     void clickBudget() {
-        double budgetMilliseconds = state.userBudgetMilliseconds;
+        double maxMs = std::max(state.userBudgetMilliseconds, state.minBudgetMilliseconds);
+        double budgetMilliseconds = maxMs;
         if (state.automaticBudget) {
             double intervalMs = frameIntervalMs();
-            budgetMilliseconds = std::min(budgetMilliseconds, std::max(3.0, intervalMs));
+            budgetMilliseconds = std::clamp(intervalMs, state.minBudgetMilliseconds, maxMs);
 
             auto* cocosDirector = CCDirector::get();
             double frameDuration = cocosDirector->getDeltaTime() * 1000.0;
             if (frameDuration > std::max(intervalMs * 2.0, 20.0)) {
-                budgetMilliseconds = std::min(budgetMilliseconds, 4.0);
+                budgetMilliseconds = std::min(budgetMilliseconds, std::max(state.minBudgetMilliseconds, 4.0));
             }
         }
         state.budgetMilliseconds = budgetMilliseconds;
@@ -1860,7 +1894,7 @@ finally {
     }
 
     void showFeedback(PlayLayer* gameLayer, std::string const& text, bool isGood) {
-        if (!state.feedbackEnabled || !gameLayer) {
+        if (!gameLayer) {
             return;
         }
         constexpr char const* FEEDBACK_ID = "afterflow-feedback";
@@ -2851,6 +2885,22 @@ finally {
         return 0;
     }
 
+    // true when the player is in a gamemode the user switched off in settings
+    bool modeDisabled(PlayerObject* player1, PlayerObject* player2) {
+        auto isOff = [](PlayerObject* playerObject) {
+            if (!playerObject) return false;
+            if (playerObject->m_isShip) return !state.modeShip;
+            if (playerObject->m_isDart) return !state.modeWave;
+            if (playerObject->m_isBird) return !state.modeUfo;
+            if (playerObject->m_isBall) return !state.modeBall;
+            if (playerObject->m_isSwing) return !state.modeSwing;
+            if (playerObject->m_isSpider) return !state.modeSpider;
+            if (playerObject->m_isRobot) return !state.modeRobot;
+            return !state.modeCube;
+        };
+        return isOff(player1) || isOff(player2);
+    }
+
     void queueInput(int tickCount, bool isDown) {
         state.queuedInputs.push_back({ tickCount, isDown });
     }
@@ -2903,7 +2953,7 @@ finally {
         int earlyTicks = midTickFraction > 0.f ? 1 : 0;
 
         bool hasShip = player1 && (player1->m_isShip || (player2 && player2->m_isShip));
-        if (!player1 || player1->m_isDead || (hasShip && !state.shipBufferEnabled)) {
+        if (!player1 || player1->m_isDead || (hasShip && !state.shipBufferEnabled) || modeDisabled(player1, player2)) {
             resetPending();
             state.hasAppliedInput = isDown;
             return false;
@@ -3065,7 +3115,9 @@ finally {
         if (savedTick <= 0) {
             say("no save: {}{} dies in {}t (max {}t, best +{}t -> {}t of {})", isDown ? "press" : "release", tickTagText, baseDelay, maxDelayTicks,
                 debugBestDelay, debugBestResult, horizonTicks);
-            showFeedback(playLayer, "can't save", false);
+            if (state.feedbackEnabled && state.cantSaveFeedbackEnabled) {
+                showFeedback(playLayer, "can't save", false);
+            }
             state.hasAppliedInput = isDown;
             return false;
         }
@@ -3093,7 +3145,13 @@ finally {
             isCubeStyleWave && isMarginUsed ? std::string("  +margin")
             : isRobotPress ? fmt::format("  hold {}t", robotUsedHoldTicks) : std::string());
         state.inputShiftTicks = savedTick;
-        showFeedback(playLayer, fmt::format("fixed +{}t", savedTick), true);
+        if (state.feedbackEnabled) {
+            double framesSaved = savedTick * currentFps() / 240.0;
+            showFeedback(playLayer,
+                state.feedbackUnits == 1 ? fmt::format("fixed +{:.1f}f", framesSaved)
+                : state.feedbackUnits == 2 ? fmt::format("fixed +{}t ({:.1f}f)", savedTick, framesSaved)
+                : fmt::format("fixed +{}t", savedTick), true);
+        }
         queueInput(savedTick - earlyTicks, isDown);
         return true;
     }
@@ -3284,6 +3342,7 @@ class $modify(BufPlayLayer, PlayLayer) {
     }
 
     void resume() {
+        readSettings();
         resetPending();
         state.rapidInputTicks = 0;
         state.ticksSinceInput = 999;
