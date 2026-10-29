@@ -2,7 +2,8 @@
     "geode": "5.11.2",
     "gd": {
         "win": "2.2081",
-        "mac": "2.2081"
+        "mac": "2.2081",
+        "android": "2.2081"
     },
     "id": "afterflow.prsevend",
     "name": "Afterflow",
@@ -158,6 +159,27 @@
                 "input": true,
                 "slider": true
             }
+        },
+        "android-title": {
+            "type": "title",
+            "name": "android",
+            "description": "android has no function keys or terminal, so the stage is picked here instead. the keybinds and terminal settings below only do something on pc"
+        },
+        "android-stage": {
+            "type": "string",
+            "name": "stage (android)",
+            "description": "prediction stage on android. 1 = 2 ticks ... 7 = 40 ticks, 8 = off. applies when you resume or enter a level. ignored on pc (use the cycle key there)",
+            "default": "4: 16t / 8t",
+            "one-of": [
+                "1: 2t / 2t",
+                "2: 4t / 4t",
+                "3: 8t / 8t",
+                "4: 16t / 8t",
+                "5: 24t / 12t",
+                "6: 32t / 16t",
+                "7: 40t / 20t",
+                "8: off"
+            ]
         },
         "keybinds-title": {
             "type": "title",
