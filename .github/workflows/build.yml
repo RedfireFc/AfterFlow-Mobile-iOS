@@ -28,7 +28,7 @@ jobs:
           - name: iOS
             os: macos-latest
             target: iOS
-            sdk: nightly
+            bindings-ref: 1605f500d053f8de122bf5c7dc6d17c24866e02e
 
     name: ${{ matrix.config.name }}
     runs-on: ${{ matrix.config.os }}
@@ -41,7 +41,7 @@ jobs:
         with:
           combine: true
           target: ${{ matrix.config.target }}
-          sdk: ${{ matrix.config.sdk || 'given' }}
+          bindings-ref: ${{ matrix.config.bindings-ref }}
 
   package:
     name: Package builds
