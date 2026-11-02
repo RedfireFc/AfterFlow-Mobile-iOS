@@ -1,3 +1,7 @@
+# v2.4.6
+
+- [fix] version bump so geode re-extracts the package instead of reusing a stale unzipped copy that had no binary for the current platform.
+
 # v2.4.5
 
 - [fix] the control panel is no longer attached to every scene, so geode's mod list and settings screens are left alone (suspected cause of mod menus crashing).
