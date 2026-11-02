@@ -2694,7 +2694,8 @@ finally {
     }
 
     CCRect configButtonRect(int index) {
-        float x = (index == 0) ? CONFIG_BUTTON_X : CONFIG_EXPORT_X;
+        float x = (index == 0) ? CONFIG_BUTTON_X
+            : (index == 1 ? CONFIG_EXPORT_X : CONFIG_EXPORT_X + CONFIG_BUTTON_WIDTH + CONFIG_BUTTON_GAP);
         return CCRect(x, CONFIG_BUTTON_Y - CONFIG_BUTTON_HEIGHT * 0.5f, CONFIG_BUTTON_WIDTH, CONFIG_BUTTON_HEIGHT);
     }
 
@@ -2858,87 +2859,172 @@ finally {
 
     // ---- first-open tutorial ------------------------------------------------
     constexpr char const* TUTORIAL_DONE_KEY = "tutorial-done";
-    constexpr float TUTORIAL_CARD_W = 500.f;
-    constexpr float TUTORIAL_CARD_H = 260.f;
+    constexpr float TUTORIAL_CARD_W = 410.f;
+
+    // things the tour can point at
+    constexpr int TF_NONE = -1;
+    constexpr int TF_LOGO = 0;
+    constexpr int TF_HEADER = 1;
+    constexpr int TF_DISMISS = 2;
+    constexpr int TF_TAB0 = 3;
+    constexpr int TF_TAB1 = 4;
+    constexpr int TF_TAB2 = 5;
+    constexpr int TF_LOGPANE = 6;
+    constexpr int TF_COPY = 7;
+    constexpr int TF_STAGETRACK = 8;
+    constexpr int TF_CUSTOM = 9;
+    constexpr int TF_SLIDER = 10;
+    constexpr int TF_SWATCHES = 11;
+    constexpr int TF_CONFIG = 12;
 
     struct TutorialStep {
         std::string title;
-        int tab; // tab to show behind the card, -1 keeps the current one
+        int tab; // tab to show right away, -1 keeps the current one
         std::vector<std::string> lines;
+        int cursor;  // where the cursor flies to (TF_NONE hides it)
+        bool tap;    // true: the cursor taps what it points at
+        int focus;   // what stays lit once the cursor arrives
+        int cursor2; // optional second stop after a short pause
     };
 
     std::vector<TutorialStep> tutorialSteps() {
         bool const mobile = isMobileHost();
         std::vector<TutorialStep> steps;
         steps.push_back({ "welcome to afterflow", -1, {
-            "afterflow fixes your early clicks so they land accurately.",
-            "this quick tour shows what each tab does.",
-            "it only takes a minute, and you can skip it right now.",
-        } });
+            "afterflow fixes your early clicks so they land",
+            "accurately. this quick tour shows what each tab",
+            "does, and you can skip it right now.",
+        }, TF_NONE, false, TF_LOGO, TF_NONE });
         steps.push_back({ "the panel", 0, {
             "the game pauses while this panel is open.",
             mobile ? std::string("close it any time with the x in the top right.")
-                   : fmt::format("close it with the x in the top right or {}.", panelKey()),
-            "the text at the top shows whether the buffer is on.",
+                   : fmt::format("close it with the x or {}.", panelKey()),
+            "the text up top shows whether the buffer is on.",
             "tap the afterflow logo any time to replay this tour.",
-        } });
-        TutorialStep logStep{ "log tab", 0, {
+        }, TF_DISMISS, false, TF_HEADER, TF_NONE });
+        TutorialStep logStep{ "log tab", -1, {
             "a live feed of what afterflow is doing:",
-            "stage changes, prediction messages and update checks.",
+            "stage changes, predictions and update checks.",
             "copy puts the whole log on your clipboard.",
             "the chips at the bottom show which extras are on:",
             "console, wave and path.",
-        } };
+        }, TF_TAB0, true, TF_LOGPANE, TF_COPY };
         if (!mobile) {
             logStep.lines.push_back("terminal opens the log in its own window.");
         }
         steps.push_back(logStep);
-        steps.push_back({ "stage tab", 1, {
+        steps.push_back({ "stage tab", -1, {
             "a stage is how far afterflow may delay a click to fix it.",
             "the numbers are ticks: 4 ticks is one frame at 60 fps.",
-            "a higher stage can correct earlier clicks over a longer window.",
+            "a higher stage can correct earlier clicks.",
             mobile ? std::string("tap a stage to switch to it.")
-                   : fmt::format("tap a stage to switch, or press {} to cycle them.", stageKey()),
+                   : fmt::format("tap a stage to switch, or press {} to cycle.", stageKey()),
             "the last stage is off, so your clicks are left untouched.",
-        } });
+        }, TF_TAB1, true, TF_STAGETRACK, TF_NONE });
         steps.push_back({ "custom stages", 1, {
             "tap + custom to copy the selected stage (up to 4).",
             "then drag the slider, tap the number and type, or use",
-            "-5 / -1 / +1 / +5 to set the delay for all modes and wave.",
+            "-5 / -1 / +1 / +5 to set the delay for all and wave.",
             "remove deletes the selected custom stage.",
             "going over 120 ticks may lag or work worse.",
-        } });
-        steps.push_back({ "settings tab", 2, {
+        }, TF_CUSTOM, false, TF_CUSTOM, TF_SLIDER });
+        steps.push_back({ "settings tab", -1, {
             "pick a theme to change the panel colors.",
             "glow turns the soft glow behind the panel on or off.",
             "terminal shows or hides the terminal button (pc only).",
-            "the mode icons show your icons in your colors. tap one",
-            "to change it, and the + adds another.",
+            "the mode icons show your icons in your colors.",
+            "tap one to change it, and the + adds another.",
             "export copies your tuning as json, import loads it back.",
-        } });
+        }, TF_TAB2, true, TF_SWATCHES, TF_CONFIG });
         steps.push_back({ "you're all set", -1, {
             "that's everything.",
             "tap the afterflow logo any time to see this tour again.",
-        } });
+        }, TF_NONE, false, TF_LOGO, TF_NONE });
         return steps;
     }
 
-    CCRect tutorialCardRect() {
-        return CCRect((DECK_WIDTH - TUTORIAL_CARD_W) * 0.5f, (DECK_HEIGHT - TUTORIAL_CARD_H) * 0.5f, TUTORIAL_CARD_W, TUTORIAL_CARD_H);
+    float tutorialCardHeight(size_t lineCount) {
+        return 104.f + 19.f * static_cast<float>(lineCount);
     }
 
-    CCRect tutorialSkipRect() {
-        auto card = tutorialCardRect();
-        return CCRect(card.getMinX() + 24.f, card.getMinY() + 18.f, 110.f, 34.f);
+    // card-local buttons, origin is the card's bottom left corner
+    CCRect tutorialSkipRect(CCPoint const& origin) {
+        return CCRect(origin.x + 22.f, origin.y + 16.f, 100.f, 32.f);
     }
 
-    CCRect tutorialNextRect() {
-        auto card = tutorialCardRect();
-        return CCRect(card.getMaxX() - 24.f - 130.f, card.getMinY() + 18.f, 130.f, 34.f);
+    CCRect tutorialNextRect(CCPoint const& origin) {
+        return CCRect(origin.x + TUTORIAL_CARD_W - 22.f - 120.f, origin.y + 16.f, 120.f, 32.f);
     }
 
     CCRect logoRect() {
         return CCRect(MARGIN, HEADER_Y - 20.f, 150.f, 40.f);
+    }
+
+    CCRect tutorialRectFor(int kind) {
+        switch (kind) {
+            case TF_LOGO: return logoRect();
+            case TF_HEADER: return CCRect(CONTENT_RIGHT - 190.f, HEADER_Y - 18.f, 190.f, 36.f);
+            case TF_DISMISS: return CCRect(DISMISS_X, DISMISS_Y, DISMISS_WIDTH, DISMISS_HEIGHT);
+            case TF_TAB0:
+            case TF_TAB1:
+            case TF_TAB2: return tabSlotRect(kind - TF_TAB0);
+            case TF_LOGPANE: return CCRect(LOG_X, 250.f, LOG_WIDTH, CARD_TOP - 250.f);
+            case TF_COPY: return CCRect(COPY_X, COPY_Y, COPY_WIDTH, COPY_HEIGHT);
+            case TF_STAGETRACK: return CCRect(STAGE_TRACK_X, STAGE_TRACK_Y, STAGE_TRACK_WIDTH, STAGE_TRACK_HEIGHT);
+            case TF_CUSTOM: return customAddRect();
+            case TF_SLIDER: return CCRect(
+                STAGE_BAR_X - 2.f, STAGE_TIMING_WAVE_Y - 20.f,
+                STAGE_BAR_WIDTH + 14.f, STAGE_TIMING_ALL_Y - STAGE_TIMING_WAVE_Y + 40.f
+            );
+            case TF_SWATCHES: return CCRect(
+                SWATCH_X, SWATCH_Y,
+                static_cast<float>(THEME_COUNT) * SWATCH_WIDTH + static_cast<float>(THEME_COUNT - 1) * SWATCH_GAP,
+                SWATCH_HEIGHT
+            );
+            case TF_CONFIG: {
+                auto first = configButtonRect(0);
+                auto second = configButtonRect(1);
+                float left = std::min(first.getMinX(), second.getMinX());
+                float right = std::max(first.getMaxX(), second.getMaxX());
+                return CCRect(left, first.getMinY(), right - left, first.size.height);
+            }
+            default: return CCRect(0.f, 0.f, DECK_WIDTH, DECK_HEIGHT);
+        }
+    }
+
+    CCRect padRect(CCRect const& rect, float pad) {
+        return CCRect(rect.origin.x - pad, rect.origin.y - pad, rect.size.width + pad * 2.f, rect.size.height + pad * 2.f);
+    }
+
+    float rectOverlapArea(CCRect const& first, CCRect const& second) {
+        float width = std::min(first.getMaxX(), second.getMaxX()) - std::max(first.getMinX(), second.getMinX());
+        float height = std::min(first.getMaxY(), second.getMaxY()) - std::max(first.getMinY(), second.getMinY());
+        return (width > 0.f && height > 0.f) ? width * height : 0.f;
+    }
+
+    // picks the spot for the tour card that covers the least of what is lit
+    CCPoint tutorialPickCardOrigin(float height, std::vector<CCRect> const& avoid, bool centered) {
+        float const xs[3] = { (DECK_WIDTH - TUTORIAL_CARD_W) * 0.5f, 12.f, DECK_WIDTH - 12.f - TUTORIAL_CARD_W };
+        if (centered) {
+            return CCPoint(xs[0], (DECK_HEIGHT - height) * 0.5f);
+        }
+        float const ys[2] = { 10.f, DECK_HEIGHT - 10.f - height };
+        CCPoint best(xs[0], ys[0]);
+        float bestScore = 1e9f;
+        for (float y : ys) {
+            for (float x : xs) {
+                CCRect card(x, y, TUTORIAL_CARD_W, height);
+                float score = 0.f;
+                for (auto const& rect : avoid) {
+                    score += rectOverlapArea(card, padRect(rect, 4.f));
+                }
+                if (score < bestScore - 0.5f) {
+                    bestScore = score;
+                    best = CCPoint(x, y);
+                }
+            }
+        }
+        return best;
     }
 
     class AfterflowOverlay : public CCLayer {
@@ -2976,6 +3062,7 @@ finally {
             SettingsRow,
             ImportConfig,
             ExportConfig,
+            ReplayTutorial,
             ModeIcon,
             ModeIconAdd,
             StageAdd,
@@ -3010,6 +3097,11 @@ finally {
         void advanceTutorial();
         void finishTutorial();
         void buildTutorialLayer();
+        void beginTutorialMotion(TutorialStep const& step);
+        void tutorialFrame(float dt);
+        void clearTutorialLayer();
+        void drawTabIndicator();
+        void animTick(float dt);
         HitTarget tutorialHit(CCPoint const& point) const;
         void beginTickEdit(int row);
         void endTickEdit();
@@ -3061,6 +3153,37 @@ finally {
         CCLabelBMFont* m_tickValueLabels[2] = {};
         CCNode* m_tutorialLayer = nullptr;
         int m_tutorialStep = -1;
+        // tour animation state
+        CCDrawNode* m_tutShade = nullptr;
+        CCDrawNode* m_tutFx = nullptr;
+        CCDrawNode* m_tutCursor = nullptr;
+        CCDrawNode* m_tutProgress = nullptr;
+        CCNode* m_tutCard = nullptr;
+        CCRect m_tutSpot = CCRect(0.f, 0.f, 0.f, 0.f);
+        CCRect m_tutSpotTarget = CCRect(0.f, 0.f, 0.f, 0.f);
+        CCPoint m_tutCardTarget = CCPoint(0.f, 0.f);
+        CCPoint m_tutCursorPos = CCPoint(0.f, 0.f);
+        float m_tutCardH = 200.f;
+        float m_tutTime = 0.f;
+        float m_tutAlpha = 0.f;
+        float m_tutCursorVis = 0.f;
+        float m_tutProgShown = 0.f;
+        float m_tutRippleT = -1.f;
+        float m_tutPhaseTime = 0.f;
+        int m_tutPhase = 2; // 0 flying, 1 tapping, 2 settled
+        int m_tutKindNow = -1;
+        int m_tutFocusNow = -1;
+        int m_tutKind2 = -1;
+        int m_tutTotal = 1;
+        bool m_tutTapNow = false;
+        bool m_tutActionDone = false;
+        bool m_tutClosing = false;
+        // ui animation state
+        float m_tabIndX = -1.f;
+        float m_tabIndTarget = 0.f;
+        int m_lastAppliedTab = -1;
+        float m_barShown[2] = { -1.f, -1.f };
+        float m_barTarget[2] = { 0.f, 0.f };
         TextInput* m_tickInputs[2] = {};
         int m_editingRow = -1;
         bool m_suppressTickInput = false;
@@ -3085,6 +3208,7 @@ finally {
         CCLabelBMFont* m_configStatusLabel = nullptr;
         CCNode* m_importButton = nullptr;
         CCNode* m_exportButton = nullptr;
+        CCNode* m_tutorialButton = nullptr;
         int m_activeTab = 0;
         CCDrawNode* m_chipBar = nullptr;
         CCLabelBMFont* m_chipLabels[CHIP_COUNT] = {};
@@ -3205,6 +3329,7 @@ finally {
         m_configStatusLabel = nullptr;
         m_importButton = nullptr;
         m_exportButton = nullptr;
+        m_tutorialButton = nullptr;
         m_modeIcons.clear();
         for (int index = 0; index < LOG_LINE_COUNT; ++index) { m_activityLines[index] = nullptr; }
         for (int index = 0; index < STAGE_MAX_STAGES; ++index) { m_stageNameLabels[index] = nullptr; }
@@ -3212,6 +3337,16 @@ finally {
         for (int index = 0; index < 2; ++index) { m_tickValueLabels[index] = nullptr; }
         for (int index = 0; index < 2; ++index) { m_tickInputs[index] = nullptr; }
         m_tutorialLayer = nullptr;
+        m_tutShade = nullptr;
+        m_tutFx = nullptr;
+        m_tutCursor = nullptr;
+        m_tutProgress = nullptr;
+        m_tutCard = nullptr;
+        m_tutClosing = false;
+        m_tabIndX = -1.f;
+        m_lastAppliedTab = -1;
+        m_barShown[0] = -1.f;
+        m_barShown[1] = -1.f;
         m_editingRow = -1;
         m_draggingSlider = false;
         m_customAddLabel = nullptr;
@@ -3498,10 +3633,11 @@ finally {
 
         m_importButton = makeDeckButton(m_deck, configButtonRect(0), "import", false, false, 0.58f);
         m_exportButton = makeDeckButton(m_deck, configButtonRect(1), "export", false, false, 0.58f);
+        m_tutorialButton = makeDeckButton(m_deck, configButtonRect(2), "tutorial", false, false, 0.58f, true);
 
         m_configStatusLabel = makeLabel("", false, 0.54f, faintTextColor());
         m_configStatusLabel->setAnchorPoint(CCPoint(0.f, 0.5f));
-        m_configStatusLabel->setPosition(CCPoint(configButtonRect(1).getMaxX() + 14.f, CONFIG_BUTTON_Y));
+        m_configStatusLabel->setPosition(CCPoint(configButtonRect(2).getMaxX() + 14.f, CONFIG_BUTTON_Y));
         m_deck->addChild(m_configStatusLabel, 3);
 
         updateModeIcons();
@@ -3632,25 +3768,27 @@ finally {
         if (m_activeTab >= TAB_COUNT) { m_activeTab = TAB_COUNT - 1; }
 
         if (m_tabBar) {
-            m_tabBar->clear();
             auto slot = tabSlotRect(m_activeTab);
-            drawCurvedRect(
-                m_tabBar,
-                CCRect(slot.getMinX() + 18.f, TAB_LABEL_Y - 17.f, slot.size.width - 36.f, 34.f),
-                8.f,
-                color4(accentColor(), 26),
-                color4(accentColor(), 74),
-                1.f
-            );
+            m_tabIndTarget = slot.getMinX() + 18.f;
+            if (m_tabIndX < 0.f || !m_isOpen) {
+                m_tabIndX = m_tabIndTarget;
+            }
+            drawTabIndicator();
         }
 
         for (int index = 0; index < TAB_COUNT; ++index) {
             if (m_tabLabels[index]) {
                 bool isActive = index == m_activeTab;
+                m_tabLabels[index]->stopAllActions();
                 m_tabLabels[index]->setColor(isActive ? color3(244, 245, 250) : faintTextColor());
                 m_tabLabels[index]->setOpacity(isActive ? 255 : 185);
+                if (isActive && m_lastAppliedTab >= 0 && m_lastAppliedTab != m_activeTab && m_isOpen) {
+                    m_tabLabels[index]->setOpacity(110);
+                    m_tabLabels[index]->runAction(CCFadeTo::create(0.22f, 255));
+                }
             }
         }
+        m_lastAppliedTab = m_activeTab;
 
         bool const showLog = m_activeTab == 0;
         bool const showStage = m_activeTab == 1;
@@ -3694,6 +3832,7 @@ finally {
         if (m_modeIconContainer) { m_modeIconContainer->setVisible(showSettings); }
         if (m_importButton) { m_importButton->setVisible(showSettings); }
         if (m_exportButton) { m_exportButton->setVisible(showSettings); }
+        if (m_tutorialButton) { m_tutorialButton->setVisible(showSettings); }
         if (m_configStatusLabel) { m_configStatusLabel->setVisible(showSettings); }
         for (int i = 0; i < 2; ++i) {
             if (m_settingsValueLabels[i]) { m_settingsValueLabels[i]->setVisible(showSettings); }
@@ -3795,7 +3934,15 @@ finally {
             int barMax = isCustomSelected ? CUSTOM_TICKS_MAX : std::max({ 40, shownAll, shownWave });
 
             float const barHeight = 8.f;
-            auto drawBar = [&](float y, int ticks, ccColor3B tint) {
+            m_barTarget[0] = static_cast<float>(shownAll);
+            m_barTarget[1] = static_cast<float>(shownWave);
+            for (int barIndex = 0; barIndex < 2; ++barIndex) {
+                if (m_barShown[barIndex] < 0.f || m_draggingSlider || !m_isOpen) {
+                    m_barShown[barIndex] = m_barTarget[barIndex];
+                }
+            }
+            auto drawBar = [&](int barIndex, float y, ccColor3B tint) {
+                float const ticks = m_barShown[barIndex];
                 // dark track with a faint outline
                 drawCurvedRect(
                     m_stageTrack,
@@ -3805,12 +3952,12 @@ finally {
                     color4(255, 255, 255, 22),
                     1.f
                 );
-                if (ticks > 0) {
-                    float ratio = std::clamp(static_cast<float>(ticks) / static_cast<float>(barMax), 0.03f, 1.f);
+                if (ticks > 0.5f) {
+                    float ratio = std::clamp(ticks / static_cast<float>(barMax), 0.03f, 1.f);
                     if (isCustomSelected) {
                         // custom stages use the same 1..CUSTOM_TICKS_MAX mapping as the slider
                         ratio = std::clamp(
-                            static_cast<float>(ticks - CUSTOM_TICKS_MIN) / static_cast<float>(CUSTOM_TICKS_MAX - CUSTOM_TICKS_MIN),
+                            (ticks - static_cast<float>(CUSTOM_TICKS_MIN)) / static_cast<float>(CUSTOM_TICKS_MAX - CUSTOM_TICKS_MIN),
                             0.f, 1.f
                         );
                     }
@@ -3866,8 +4013,8 @@ finally {
                     }
                 }
             };
-            drawBar(STAGE_TIMING_ALL_Y, shownAll, live);
-            drawBar(STAGE_TIMING_WAVE_Y, shownWave, live);
+            drawBar(0, STAGE_TIMING_ALL_Y, live);
+            drawBar(1, STAGE_TIMING_WAVE_Y, live);
 
             // value boxes
             for (int row = 0; row < 2; ++row) {
@@ -4121,6 +4268,7 @@ finally {
         layout();
         refresh();
         schedule(schedule_selector(AfterflowOverlay::tickRefresh), 0.2f);
+        schedule(schedule_selector(AfterflowOverlay::animTick));
 
         m_scrim->stopAllActions();
         m_scrim->setVisible(true);
@@ -4129,8 +4277,8 @@ finally {
 
         m_deck->stopAllActions();
         m_deck->setVisible(true);
-        m_deck->setScale(m_deckScale * 0.96f);
-        m_deck->runAction(CCEaseOut::create(CCScaleTo::create(0.22f, m_deckScale), 2.f));
+        m_deck->setScale(m_deckScale * 0.88f);
+        m_deck->runAction(CCEaseBackOut::create(CCScaleTo::create(0.3f, m_deckScale)));
 
         if (m_tutorialStep < 0 && !Mod::get()->getSavedValue<bool>(TUTORIAL_DONE_KEY, false)) {
             startTutorial();
@@ -4144,6 +4292,7 @@ finally {
         endTickEdit();
         m_isOpen = false;
         unschedule(schedule_selector(AfterflowOverlay::tickRefresh));
+        unschedule(schedule_selector(AfterflowOverlay::animTick));
 
         m_deck->stopAllActions();
         m_deck->runAction(CCSequence::create(
@@ -4219,6 +4368,7 @@ finally {
         m_pressedTarget = HitTarget::None;
         m_pressedNode = nullptr;
         unschedule(schedule_selector(AfterflowOverlay::tickRefresh));
+        unschedule(schedule_selector(AfterflowOverlay::animTick));
         CCLayer::onExit();
     }
 
@@ -4421,22 +4571,37 @@ finally {
     }
 
     AfterflowOverlay::HitTarget AfterflowOverlay::tutorialHit(CCPoint const& point) const {
-        if (m_tutorialStep < 0) {
+        if (m_tutorialStep < 0 || !m_tutCard) {
             return HitTarget::None;
         }
-        bool const isLast = m_tutorialStep >= static_cast<int>(tutorialSteps().size()) - 1;
-        if (!isLast && tutorialSkipRect().containsPoint(point)) {
+        CCPoint origin = m_tutCard->getPosition();
+        bool const isLast = m_tutorialStep >= m_tutTotal - 1;
+        if (!isLast && tutorialSkipRect(origin).containsPoint(point)) {
             return HitTarget::TutorialSkip;
         }
-        if (tutorialNextRect().containsPoint(point)) {
+        if (tutorialNextRect(origin).containsPoint(point)) {
             return HitTarget::TutorialNext;
         }
         return HitTarget::None;
     }
 
+    void AfterflowOverlay::clearTutorialLayer() {
+        if (m_tutorialLayer) {
+            m_tutorialLayer->removeFromParentAndCleanup(true);
+        }
+        m_tutorialLayer = nullptr;
+        m_tutShade = nullptr;
+        m_tutFx = nullptr;
+        m_tutCursor = nullptr;
+        m_tutProgress = nullptr;
+        m_tutCard = nullptr;
+        m_tutClosing = false;
+    }
+
     void AfterflowOverlay::startTutorial() {
         endTickEdit();
         m_draggingSlider = false;
+        clearTutorialLayer();
         m_tutorialStep = 0;
         showTutorialStep();
     }
@@ -4444,19 +4609,29 @@ finally {
     void AfterflowOverlay::showTutorialStep() {
         auto steps = tutorialSteps();
         if (m_tutorialStep < 0 || m_tutorialStep >= static_cast<int>(steps.size())) {
-            buildTutorialLayer();
             return;
         }
-        int tab = steps[m_tutorialStep].tab;
+        auto const& step = steps[m_tutorialStep];
+        int tab = step.tab;
         if (tab >= 0 && tab < TAB_COUNT && tab != m_activeTab) {
             m_activeTab = tab;
             applyTab();
             refresh();
         }
         buildTutorialLayer();
+        beginTutorialMotion(step);
     }
 
     void AfterflowOverlay::advanceTutorial() {
+        // if next is pressed before the cursor tapped a tab, still switch to it
+        if (m_tutTapNow && !m_tutActionDone) {
+            int pendingTab = m_tutKindNow - TF_TAB0;
+            if (pendingTab >= 0 && pendingTab < TAB_COUNT && pendingTab != m_activeTab) {
+                m_activeTab = pendingTab;
+                applyTab();
+                refresh();
+            }
+        }
         ++m_tutorialStep;
         if (m_tutorialStep >= static_cast<int>(tutorialSteps().size())) {
             finishTutorial();
@@ -4469,14 +4644,17 @@ finally {
         m_tutorialStep = -1;
         Mod::get()->setSavedValue<bool>(TUTORIAL_DONE_KEY, true);
         (void)Mod::get()->saveData();
-        buildTutorialLayer();
+        if (m_tutorialLayer) {
+            // let it glide away instead of vanishing
+            m_tutClosing = true;
+            m_tutKindNow = -1;
+            m_tutKind2 = -1;
+            m_tutCardTarget = CCPoint(m_tutCardTarget.x, -m_tutCardH - 40.f);
+            m_tutSpotTarget = CCRect(-40.f, -40.f, DECK_WIDTH + 80.f, DECK_HEIGHT + 80.f);
+        }
     }
 
     void AfterflowOverlay::buildTutorialLayer() {
-        if (m_tutorialLayer) {
-            m_tutorialLayer->removeFromParentAndCleanup(true);
-            m_tutorialLayer = nullptr;
-        }
         auto steps = tutorialSteps();
         if (!m_deck || m_tutorialStep < 0 || m_tutorialStep >= static_cast<int>(steps.size())) {
             return;
@@ -4484,49 +4662,381 @@ finally {
         auto const& step = steps[m_tutorialStep];
         bool const isFirst = m_tutorialStep == 0;
         bool const isLast = m_tutorialStep == static_cast<int>(steps.size()) - 1;
+        m_tutTotal = static_cast<int>(steps.size());
+        float const cardHeight = tutorialCardHeight(step.lines.size());
+        m_tutCardH = cardHeight;
+        ccColor4F const clear = color4(0, 0, 0, 0);
 
-        m_tutorialLayer = CCNode::create();
-        m_tutorialLayer->setContentSize(CCSize(DECK_WIDTH, DECK_HEIGHT));
-        m_deck->addChild(m_tutorialLayer, 30);
+        if (!m_tutorialLayer) {
+            m_tutorialLayer = CCNode::create();
+            m_tutorialLayer->setContentSize(CCSize(DECK_WIDTH, DECK_HEIGHT));
+            m_deck->addChild(m_tutorialLayer, 30);
 
-        auto* shade = makeDrawNode();
-        CCPoint corners[4] = {
-            CCPoint(0.f, 0.f), CCPoint(DECK_WIDTH, 0.f), CCPoint(DECK_WIDTH, DECK_HEIGHT), CCPoint(0.f, DECK_HEIGHT),
+            m_tutShade = makeDrawNode();
+            m_tutorialLayer->addChild(m_tutShade, 0);
+
+            m_tutCard = CCNode::create();
+            m_tutorialLayer->addChild(m_tutCard, 3);
+            m_tutCard->setPosition(CCPoint((DECK_WIDTH - TUTORIAL_CARD_W) * 0.5f, -cardHeight - 30.f));
+
+            m_tutFx = makeDrawNode();
+            m_tutorialLayer->addChild(m_tutFx, 4);
+
+            // pointer, tip at the node origin
+            m_tutCursor = makeDrawNode();
+            ccColor4F shadow = color4(0, 0, 0, 90);
+            CCPoint headShadow[3] = { CCPoint(2.f, -2.f), CCPoint(2.f, -21.f), CCPoint(15.f, -15.f) };
+            m_tutCursor->drawPolygon(headShadow, 3, shadow, 0.f, clear);
+            CCPoint head[3] = { CCPoint(0.f, 0.f), CCPoint(0.f, -19.f), CCPoint(13.f, -13.f) };
+            m_tutCursor->drawPolygon(head, 3, color4(250, 251, 255, 255), 0.f, clear);
+            CCPoint tail[4] = { CCPoint(3.5f, -13.5f), CCPoint(7.5f, -21.5f), CCPoint(11.f, -20.f), CCPoint(8.f, -12.5f) };
+            m_tutCursor->drawPolygon(tail, 4, color4(250, 251, 255, 255), 0.f, clear);
+            ccColor4F edge = color4(14, 15, 22, 255);
+            m_tutCursor->drawSegment(CCPoint(0.f, 0.f), CCPoint(0.f, -19.f), 0.7f, edge);
+            m_tutCursor->drawSegment(CCPoint(0.f, -19.f), CCPoint(4.f, -14.6f), 0.7f, edge);
+            m_tutCursor->drawSegment(CCPoint(4.f, -14.6f), CCPoint(7.5f, -21.5f), 0.7f, edge);
+            m_tutCursor->drawSegment(CCPoint(7.5f, -21.5f), CCPoint(11.f, -20.f), 0.7f, edge);
+            m_tutCursor->drawSegment(CCPoint(11.f, -20.f), CCPoint(8.f, -12.8f), 0.7f, edge);
+            m_tutCursor->drawSegment(CCPoint(8.f, -12.8f), CCPoint(13.f, -13.f), 0.7f, edge);
+            m_tutCursor->drawSegment(CCPoint(13.f, -13.f), CCPoint(0.f, 0.f), 0.7f, edge);
+            m_tutCursor->setScale(0.f);
+            m_tutCursor->setVisible(false);
+            m_tutorialLayer->addChild(m_tutCursor, 5);
+
+            m_tutAlpha = 0.f;
+            m_tutClosing = false;
+            m_tutTime = 0.f;
+            m_tutSpot = CCRect(-40.f, -40.f, DECK_WIDTH + 80.f, DECK_HEIGHT + 80.f);
+            m_tutSpotTarget = m_tutSpot;
+            m_tutCursorPos = CCPoint(DECK_WIDTH * 0.5f, 140.f);
+            m_tutCursor->setPosition(m_tutCursorPos);
+            m_tutCursorVis = 0.f;
+            m_tutProgShown = 0.f;
+            m_tutRippleT = -1.f;
+            m_tutKindNow = -1;
+            m_tutKind2 = -1;
+        }
+
+        // fresh card contents for this step
+        m_tutProgress = nullptr;
+        m_tutCard->removeAllChildrenWithCleanup(true);
+        m_tutCard->setContentSize(CCSize(TUTORIAL_CARD_W, cardHeight));
+
+        auto* glow = makeDrawNode();
+        drawCurvedRect(glow, CCRect(-4.f, -4.f, TUTORIAL_CARD_W + 8.f, cardHeight + 8.f), 15.f, clear, color4(accentColor(), 34), 2.f);
+        m_tutCard->addChild(glow, 0);
+        auto* bg = makeDrawNode();
+        drawCurvedRect(bg, CCRect(0.f, 0.f, TUTORIAL_CARD_W, cardHeight), 12.f, color4(18, 18, 24, 250), color4(accentColor(), 150), 1.5f);
+        m_tutCard->addChild(bg, 1);
+
+        m_tutProgress = makeDrawNode();
+        m_tutCard->addChild(m_tutProgress, 2);
+
+        auto popIn = [](CCNode* node, float delay, float dx, float dy) {
+            node->runAction(CCSequence::create(
+                CCDelayTime::create(delay),
+                CCSpawn::create(
+                    CCFadeIn::create(0.24f),
+                    CCEaseOut::create(CCMoveBy::create(0.24f, CCPoint(dx, dy)), 2.f),
+                    nullptr
+                ),
+                nullptr
+            ));
         };
-        shade->drawPolygon(corners, 4, color4(0, 0, 0, 150), 0.f, color4(0, 0, 0, 0));
-        m_tutorialLayer->addChild(shade, 0);
 
-        auto card = tutorialCardRect();
-        auto* cardNode = makeDrawNode();
-        drawCurvedRect(cardNode, card, 12.f, color4(18, 18, 24, 250), color4(accentColor(), 150), 1.5f);
-        m_tutorialLayer->addChild(cardNode, 1);
-
-        if (auto* title = makeLabel(step.title, true, 0.8f, color3(242, 243, 248))) {
+        if (auto* title = makeLabel(step.title, true, 0.82f, color3(242, 243, 248))) {
             title->setAnchorPoint(CCPoint(0.f, 0.5f));
-            title->setPosition(CCPoint(card.getMinX() + 28.f, card.getMaxY() - 36.f));
-            fitLabelToWidth(title, TUTORIAL_CARD_W - 120.f);
-            m_tutorialLayer->addChild(title, 3);
+            title->setPosition(CCPoint(26.f - 14.f, cardHeight - 50.f));
+            fitLabelToWidth(title, TUTORIAL_CARD_W - 130.f);
+            title->setOpacity(0);
+            m_tutCard->addChild(title, 3);
+            popIn(title, 0.05f, 14.f, 0.f);
         }
         if (auto* counter = makeLabel(fmt::format("{}/{}", m_tutorialStep + 1, steps.size()), false, 0.58f, faintTextColor())) {
             counter->setAnchorPoint(CCPoint(1.f, 0.5f));
-            counter->setPosition(CCPoint(card.getMaxX() - 26.f, card.getMaxY() - 36.f));
-            m_tutorialLayer->addChild(counter, 3);
+            counter->setPosition(CCPoint(TUTORIAL_CARD_W - 24.f, cardHeight - 22.f));
+            m_tutCard->addChild(counter, 3);
         }
-        float lineY = card.getMaxY() - 74.f;
+        float lineY = cardHeight - 80.f;
+        float delay = 0.12f;
         for (auto const& line : step.lines) {
-            if (auto* label = makeLabel(line, false, 0.62f, softTextColor())) {
+            if (auto* label = makeLabel(line, false, 0.6f, softTextColor())) {
                 label->setAnchorPoint(CCPoint(0.f, 0.5f));
-                label->setPosition(CCPoint(card.getMinX() + 28.f, lineY));
-                fitLabelToWidth(label, TUTORIAL_CARD_W - 56.f);
-                m_tutorialLayer->addChild(label, 3);
+                label->setPosition(CCPoint(26.f, lineY - 8.f));
+                fitLabelToWidth(label, TUTORIAL_CARD_W - 52.f);
+                label->setOpacity(0);
+                m_tutCard->addChild(label, 3);
+                popIn(label, delay, 0.f, 8.f);
             }
-            lineY -= 22.f;
+            lineY -= 19.f;
+            delay += 0.06f;
         }
 
+        CCPoint const zero(0.f, 0.f);
         if (!isLast) {
-            makeDeckButton(m_tutorialLayer, tutorialSkipRect(), "skip", false, false, 0.62f);
+            makeDeckButton(m_tutCard, tutorialSkipRect(zero), "skip", false, false, 0.62f);
         }
-        makeDeckButton(m_tutorialLayer, tutorialNextRect(), isLast ? "done" : (isFirst ? "go" : "next"), true, false, 0.62f);
+        makeDeckButton(m_tutCard, tutorialNextRect(zero), isLast ? "done" : (isFirst ? "go" : "next"), true, false, 0.62f);
+    }
+
+    void AfterflowOverlay::beginTutorialMotion(TutorialStep const& step) {
+        if (!m_tutorialLayer) {
+            return;
+        }
+        m_tutKindNow = step.cursor;
+        m_tutTapNow = step.tap;
+        m_tutFocusNow = step.focus;
+        m_tutKind2 = step.cursor2;
+        m_tutPhase = 0;
+        m_tutPhaseTime = 0.f;
+        m_tutActionDone = false;
+
+        std::vector<CCRect> avoid;
+        for (int kind : { step.cursor, step.focus, step.cursor2 }) {
+            if (kind >= 0) {
+                avoid.push_back(tutorialRectFor(kind));
+            }
+        }
+        m_tutCardTarget = tutorialPickCardOrigin(m_tutCardH, avoid, step.cursor < 0);
+
+        if (step.cursor >= 0) {
+            m_tutSpotTarget = tutorialRectFor(step.cursor);
+        }
+        else {
+            m_tutSpotTarget = tutorialRectFor(step.focus);
+            m_tutPhase = 2;
+        }
+    }
+
+    void AfterflowOverlay::tutorialFrame(float dt) {
+        if (!m_tutorialLayer || !m_tutShade || !m_tutCard || !m_tutCursor || !m_tutFx) {
+            return;
+        }
+        dt = std::min(dt, 0.05f);
+        m_tutTime += dt;
+        auto ease = [dt](float current, float target, float rate) {
+            return current + (target - current) * (1.f - std::exp(-rate * dt));
+        };
+
+        if (m_tutClosing) {
+            m_tutAlpha -= dt * 3.2f;
+            if (m_tutAlpha <= 0.f) {
+                clearTutorialLayer();
+                return;
+            }
+        }
+        else if (m_tutAlpha < 1.f) {
+            m_tutAlpha = std::min(1.f, m_tutAlpha + dt * 4.f);
+        }
+
+        // ---- cursor and step script ----
+        float pressScale = 1.f;
+        if (m_tutKindNow >= 0) {
+            CCRect targetRect = tutorialRectFor(m_tutKindNow);
+            CCPoint goal(targetRect.getMidX(), targetRect.getMidY());
+            if (m_tutPhase == 0) {
+                float dx = goal.x - m_tutCursorPos.x;
+                float dy = goal.y - m_tutCursorPos.y;
+                float dist = std::sqrt(dx * dx + dy * dy);
+                if (dist < 2.5f) {
+                    m_tutCursorPos = goal;
+                    m_tutPhaseTime = 0.f;
+                    if (m_tutTapNow) {
+                        m_tutPhase = 1;
+                        m_tutActionDone = false;
+                    }
+                    else {
+                        m_tutPhase = 2;
+                        m_tutSpotTarget = tutorialRectFor(m_tutFocusNow);
+                    }
+                }
+                else {
+                    float stepLen = std::max(dist * (1.f - std::exp(-6.5f * dt)), 160.f * dt);
+                    stepLen = std::min(stepLen, dist);
+                    m_tutCursorPos.x += dx / dist * stepLen;
+                    m_tutCursorPos.y += dy / dist * stepLen;
+                }
+            }
+            else if (m_tutPhase == 1) {
+                m_tutPhaseTime += dt;
+                float t = std::clamp(m_tutPhaseTime / 0.3f, 0.f, 1.f);
+                pressScale = 1.f - 0.2f * std::sin(3.14159265f * t);
+                if (!m_tutActionDone && m_tutPhaseTime >= 0.13f) {
+                    m_tutActionDone = true;
+                    m_tutRippleT = 0.f;
+                    int tab = m_tutKindNow - TF_TAB0;
+                    if (tab >= 0 && tab < TAB_COUNT && tab != m_activeTab) {
+                        m_activeTab = tab;
+                        applyTab();
+                        refresh();
+                    }
+                    m_tutSpotTarget = tutorialRectFor(m_tutFocusNow);
+                }
+                if (m_tutPhaseTime >= 0.34f) {
+                    m_tutPhase = 2;
+                    m_tutPhaseTime = 0.f;
+                }
+            }
+            else {
+                m_tutPhaseTime += dt;
+                if (m_tutKind2 >= 0 && m_tutPhaseTime >= 1.6f) {
+                    m_tutKindNow = m_tutKind2;
+                    m_tutKind2 = -1;
+                    m_tutTapNow = false;
+                    m_tutFocusNow = m_tutKindNow;
+                    m_tutSpotTarget = tutorialRectFor(m_tutKindNow);
+                    m_tutPhase = 0;
+                }
+            }
+        }
+        m_tutCursorVis = ease(m_tutCursorVis, m_tutKindNow >= 0 ? 1.f : 0.f, 10.f);
+        float bob = (m_tutPhase == 2 && m_tutKindNow >= 0) ? std::sin(m_tutTime * 3.f) * 1.6f : 0.f;
+        m_tutCursor->setPosition(CCPoint(m_tutCursorPos.x, m_tutCursorPos.y + bob));
+        m_tutCursor->setScale(1.3f * m_tutCursorVis * pressScale);
+        m_tutCursor->setVisible(m_tutCursorVis > 0.03f);
+
+        // ---- tap ripple ----
+        m_tutFx->clear();
+        if (m_tutRippleT >= 0.f) {
+            m_tutRippleT += dt;
+            float t = m_tutRippleT / 0.55f;
+            if (t >= 1.f) {
+                m_tutRippleT = -1.f;
+            }
+            else {
+                float fade = 1.f - t;
+                for (int ring = 0; ring < 2; ++ring) {
+                    float ringT = std::clamp(t - 0.18f * static_cast<float>(ring), 0.f, 1.f);
+                    if (ringT <= 0.f) {
+                        continue;
+                    }
+                    float radius = 5.f + 30.f * (1.f - (1.f - ringT) * (1.f - ringT));
+                    m_tutFx->drawCircle(
+                        m_tutCursorPos, radius, color4(0, 0, 0, 0), 2.f,
+                        color4(accentColor(), static_cast<int>(200.f * fade * (ring == 0 ? 1.f : 0.6f))), 32
+                    );
+                }
+            }
+        }
+
+        // ---- spotlight ----
+        m_tutSpot.origin.x = ease(m_tutSpot.origin.x, m_tutSpotTarget.origin.x, 9.f);
+        m_tutSpot.origin.y = ease(m_tutSpot.origin.y, m_tutSpotTarget.origin.y, 9.f);
+        m_tutSpot.size.width = ease(m_tutSpot.size.width, m_tutSpotTarget.size.width, 9.f);
+        m_tutSpot.size.height = ease(m_tutSpot.size.height, m_tutSpotTarget.size.height, 9.f);
+
+        m_tutShade->clear();
+        CCRect lit = padRect(m_tutSpot, 7.f);
+        float x0 = std::clamp(lit.getMinX(), 0.f, DECK_WIDTH);
+        float x1 = std::clamp(lit.getMaxX(), 0.f, DECK_WIDTH);
+        float y0 = std::clamp(lit.getMinY(), 0.f, DECK_HEIGHT);
+        float y1 = std::clamp(lit.getMaxY(), 0.f, DECK_HEIGHT);
+        ccColor4F shadeColor = color4(0, 0, 0, static_cast<int>(168.f * std::clamp(m_tutAlpha, 0.f, 1.f)));
+        ccColor4F clearColor = color4(0, 0, 0, 0);
+        auto fillBlock = [&](float ax, float ay, float bx, float by) {
+            if (bx - ax < 0.5f || by - ay < 0.5f) {
+                return;
+            }
+            CCPoint points[4] = { CCPoint(ax, ay), CCPoint(bx, ay), CCPoint(bx, by), CCPoint(ax, by) };
+            m_tutShade->drawPolygon(points, 4, shadeColor, 0.f, clearColor);
+        };
+        fillBlock(0.f, 0.f, DECK_WIDTH, y0);
+        fillBlock(0.f, y1, DECK_WIDTH, DECK_HEIGHT);
+        fillBlock(0.f, y0, x0, y1);
+        fillBlock(x1, y0, DECK_WIDTH, y1);
+
+        float pulse = 0.5f + 0.5f * std::sin(m_tutTime * 3.4f);
+        float alpha = std::clamp(m_tutAlpha, 0.f, 1.f);
+        for (int ring = 3; ring >= 1; --ring) {
+            float spread = 2.5f * static_cast<float>(ring) + 1.5f * pulse;
+            drawCurvedRect(
+                m_tutShade, padRect(lit, spread), 9.f + spread, clearColor,
+                color4(accentColor(), static_cast<int>(48.f / static_cast<float>(ring) * alpha)), 1.5f
+            );
+        }
+        drawCurvedRect(m_tutShade, lit, 9.f, clearColor, color4(accentColor(), static_cast<int>((150.f + 90.f * pulse) * alpha)), 2.f);
+
+        // ---- card slide ----
+        CCPoint cardPos = m_tutCard->getPosition();
+        m_tutCard->setPosition(CCPoint(
+            ease(cardPos.x, m_tutCardTarget.x, 10.f),
+            ease(cardPos.y, m_tutCardTarget.y, 10.f)
+        ));
+
+        // ---- progress pills ----
+        if (m_tutProgress) {
+            m_tutProgShown = ease(m_tutProgShown, static_cast<float>(std::max(m_tutorialStep, 0)), 9.f);
+            m_tutProgress->clear();
+            float x = 26.f;
+            float y = m_tutCardH - 22.f;
+            for (int index = 0; index < m_tutTotal; ++index) {
+                float nearness = std::clamp(1.f - std::abs(static_cast<float>(index) - m_tutProgShown), 0.f, 1.f);
+                float width = 10.f + 22.f * nearness;
+                bool reached = static_cast<float>(index) <= m_tutProgShown + 0.5f;
+                drawCurvedRect(
+                    m_tutProgress, CCRect(x, y - 2.5f, width, 5.f), 2.5f,
+                    reached ? color4(accentColor(), 235) : color4(255, 255, 255, 40),
+                    color4(0, 0, 0, 0), 0.f
+                );
+                x += width + 5.f;
+            }
+        }
+    }
+
+    void AfterflowOverlay::drawTabIndicator() {
+        if (!m_tabBar) {
+            return;
+        }
+        m_tabBar->clear();
+        auto slot = tabSlotRect(m_activeTab);
+        float baseWidth = slot.size.width - 36.f;
+        float travel = m_tabIndTarget - m_tabIndX;
+        // stretch toward the direction of travel so the pill looks fluid
+        float stretch = std::min(std::abs(travel) * 0.2f, 28.f);
+        float x = travel >= 0.f ? m_tabIndX : m_tabIndX - stretch;
+        drawCurvedRect(
+            m_tabBar,
+            CCRect(x, TAB_LABEL_Y - 17.f, baseWidth + stretch, 34.f),
+            8.f,
+            color4(accentColor(), 26),
+            color4(accentColor(), 74),
+            1.f
+        );
+    }
+
+    void AfterflowOverlay::animTick(float dt) {
+        if (!m_isOpen) {
+            return;
+        }
+        dt = std::min(dt, 0.05f);
+
+        if (m_tabIndX >= 0.f && std::abs(m_tabIndTarget - m_tabIndX) > 0.05f) {
+            m_tabIndX += (m_tabIndTarget - m_tabIndX) * (1.f - std::exp(-16.f * dt));
+            if (std::abs(m_tabIndTarget - m_tabIndX) < 0.3f) {
+                m_tabIndX = m_tabIndTarget;
+            }
+            drawTabIndicator();
+        }
+
+        bool barsMoving = false;
+        for (int index = 0; index < 2; ++index) {
+            if (m_barShown[index] < 0.f) {
+                continue;
+            }
+            float diff = m_barTarget[index] - m_barShown[index];
+            if (std::abs(diff) > 0.05f) {
+                m_barShown[index] += diff * (1.f - std::exp(-14.f * dt));
+                if (std::abs(m_barTarget[index] - m_barShown[index]) < 0.08f) {
+                    m_barShown[index] = m_barTarget[index];
+                }
+                barsMoving = true;
+            }
+        }
+        if (barsMoving && m_activeTab == 1 && !m_draggingSlider) {
+            refresh();
+        }
+
+        tutorialFrame(dt);
     }
 
     void AfterflowOverlay::beginTickEdit(int row) {
@@ -4630,6 +5140,10 @@ finally {
                 if (stageSlot) { *stageSlot = 1; }
                 return HitTarget::ExportConfig;
             }
+            if (configButtonRect(2).containsPoint(point)) {
+                if (stageSlot) { *stageSlot = 2; }
+                return HitTarget::ReplayTutorial;
+            }
         }
         if (CCRect(DISMISS_X, DISMISS_Y, DISMISS_WIDTH, DISMISS_HEIGHT).containsPoint(point)) {
             return HitTarget::Dismiss;
@@ -4702,6 +5216,9 @@ finally {
             case HitTarget::StageForward: return m_stageForwardButton;
             case HitTarget::CopyLog: return m_copyButton;
             case HitTarget::Terminal: return m_terminalButton;
+            case HitTarget::ImportConfig: return m_importButton;
+            case HitTarget::ExportConfig: return m_exportButton;
+            case HitTarget::ReplayTutorial: return m_tutorialButton;
             default: return nullptr;
         }
     }
@@ -4746,6 +5263,11 @@ finally {
 
         if (target == HitTarget::ExportConfig) {
             exportConfig();
+            return;
+        }
+
+        if (target == HitTarget::ReplayTutorial) {
+            startTutorial();
             return;
         }
 
