@@ -1756,11 +1756,9 @@ finally {
                     }
 
 #ifdef GEODE_IS_IOS
-                    // ios apps cannot relaunch themselves, so ask for a manual reopen
-                    setUpdateOverlayText("Update installed! Fully close and reopen Geometry Dash.");
-                    if (updateOverlay.hintLabel) {
-                        updateOverlay.hintLabel->setString("Swipe the app away, then open it again");
-                    }
+                    // ios apps cannot relaunch themselves: drop the blocking overlay and ask for a manual reopen
+                    hideUpdateOverlay();
+                    FLAlertLayer::create("Update installed", "Fully close and reopen Geometry Dash to finish.", "Ok")->show();
 #else
                     setUpdateOverlayText("Update complete! Restarting in 3 seconds...");
                     if (updateOverlay.hintLabel) {
@@ -1819,6 +1817,11 @@ finally {
     }
 
     void checkForUpdates(bool isLoud) {
+        // the upstream package may have no ios binary, and installing it would replace
+        // a working build with one that fails to load, so ios never self-updates
+        if (hostOS() == HostOS::IOS) {
+            return;
+        }
         static bool hasChecked = false;
         static auto lastCheckTime = std::chrono::steady_clock::now() - std::chrono::minutes(11);
         auto currentTime = std::chrono::steady_clock::now();
@@ -7636,17 +7639,19 @@ $on_mod(Loaded) {
     if (!isMobileHost()) {
         startCycleWatcher();
     }
-    setupKeybinds();
-    static auto sceneListener = SceneEvent().listen([](CCScene* scene) {
-        attachAfterflowOverlay(scene);
-    });
-    (void)sceneListener;
-    listenForSettingChanges<bool>("terminal-enabled", [](bool enabled) {
-        writeTerminalFlags();
-        if (!enabled) {
-            closeTerminal();
-        }
-    });
+    if (!isMobileHost()) {
+        setupKeybinds();
+    }
+    // the overlay is attached on demand (menu, play layer, editor, panel toggle) and
+    // never to every scene, so geode's own mod list and settings screens stay untouched
+    if (!isMobileHost()) {
+        listenForSettingChanges<bool>("terminal-enabled", [](bool enabled) {
+            writeTerminalFlags();
+            if (!enabled) {
+                closeTerminal();
+            }
+        });
+    }
     static auto primaryColorListener = listenForSettingChanges<ccColor3B>("ui-primary-color", [](ccColor3B) {
         if (auto* overlay = activeAfterflowOverlay()) {
             overlay->rebuildDeck();
