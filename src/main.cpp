@@ -34,6 +34,7 @@
 #include <fstream>
 #include <functional>
 #include <mutex>
+#include <random>
 #include <string>
 #include <thread>
 #include <unordered_map>
@@ -170,7 +171,7 @@ namespace {
             "your game might stutter or the stage might act weird.",
             CUSTOM_TICKS_SAFE
         );
-        FLAlertLayer::create("warning", message.c_str(), "ok i understand")->show();
+        FLAlertLayer::create("Warning", message.c_str(), "Ok i understand")->show();
     }
 
     void loadCustomStages() {
@@ -1572,7 +1573,7 @@ finally {
     void failUpdateDownload(std::string const& message) {
         hideUpdateOverlay();
         log::warn("afterflow update failed: {}", message);
-        FLAlertLayer::create("update failed", message.c_str(), "ok")->show();
+        FLAlertLayer::create("Update failed", message.c_str(), "Ok")->show();
     }
 
     void showUpdateOverlay() {
@@ -1612,7 +1613,7 @@ finally {
             root->addChild(panel, 1);
         }
 
-        auto* title = cocos2d::CCLabelBMFont::create("updating afterflow", "bigFont.fnt");
+        auto* title = cocos2d::CCLabelBMFont::create("Updating afterflow", "bigFont.fnt");
         if (title) {
             title->setScale(0.62f);
             title->setPosition(CCPoint(0.f, 46.f));
@@ -1643,7 +1644,7 @@ finally {
             root->addChild(updateOverlay.barFill, 3);
         }
 
-        updateOverlay.hintLabel = cocos2d::CCLabelBMFont::create("do not close the game", "goldFont.fnt");
+        updateOverlay.hintLabel = cocos2d::CCLabelBMFont::create("Do not close the game", "goldFont.fnt");
         if (updateOverlay.hintLabel) {
             updateOverlay.hintLabel->setScale(0.46f);
             updateOverlay.hintLabel->setPosition(CCPoint(0.f, -52.f));
@@ -1735,7 +1736,7 @@ finally {
 
                     setUpdateOverlayText("Update complete! Restarting in 3 seconds...");
                     if (updateOverlay.hintLabel) {
-                        updateOverlay.hintLabel->setString("the game will reopen");
+                        updateOverlay.hintLabel->setString("The game will reopen");
                     }
                     if (updateOverlay.layer) {
                         updateOverlay.layer->runAction(CCSequence::create(
@@ -1769,9 +1770,9 @@ finally {
         pendingUpdateNotice.isShown = true;
         auto latestVersion = pendingUpdateNotice.latestVersion;
         createQuickPopup(
-            "afterflow out of date",
+            "Afterflow out of date",
             fmt::format("v{} installed, latest is {}", pendingUpdateNotice.installedVersion, pendingUpdateNotice.latestVersion),
-            "dismiss", "update",
+            "Dismiss", "Update",
             [latestVersion](FLAlertLayer*, bool isUpdate) {
                 if (isUpdate) {
                     startUpdateDownload(latestVersion);
@@ -2391,7 +2392,8 @@ finally {
     constexpr float DISMISS_WIDTH = 30.f;
     constexpr float DISMISS_HEIGHT = 30.f;
 
-    constexpr int THEME_COUNT = 6;
+    constexpr int THEME_COUNT = 12;
+    constexpr int THEME_PER_ROW = 6;
     constexpr float SWATCH_WIDTH = 94.f;
     constexpr float SWATCH_HEIGHT = 38.f;
     constexpr float SWATCH_GAP = 8.f;
@@ -2489,6 +2491,12 @@ finally {
         { "amber",  0xFFB454, 0xFFD79B, 0x1B1712, 0xF4EDE3 },
         { "rose",   0xFF6B8A, 0xFFB3C3, 0x1B1418, 0xF5E8EC },
         { "mono",   0xC9CDD6, 0xFFFFFF, 0x15161A, 0xEDEEF2 },
+        { "crimson", 0xE5384B, 0xFF9AA5, 0x1A1215, 0xF5E6E8 },
+        { "sunset", 0xFF7849, 0xFFB798, 0x1B1411, 0xF5EAE4 },
+        { "gold",   0xFACC15, 0xFDE68A, 0x1A1810, 0xF6F1DC },
+        { "lime",   0xA3E635, 0xD3F59A, 0x141910, 0xEBF3E0 },
+        { "cyan",   0x22D3EE, 0x9BEAF7, 0x0F1A1C, 0xE1F3F6 },
+        { "pink",   0xF472B6, 0xFAB4D9, 0x1B1218, 0xF6E6EF },
     };
 
     ccColor3B accentColor() {
@@ -2530,7 +2538,29 @@ finally {
         return font;
     }
 
-    CCLabelBMFont* makeLabel(std::string const& text, bool isDisplay, float scale, ccColor3B color) {
+    // sentence case for every piece of ui text: only the first letter of the
+    // first word is capitalised, the rest of the text is left alone
+    std::string capFirst(std::string text) {
+        for (auto& character : text) {
+            unsigned char raw = static_cast<unsigned char>(character);
+            if (std::isalnum(raw)) {
+                if (std::islower(raw)) {
+                    character = static_cast<char>(std::toupper(raw));
+                }
+                break;
+            }
+        }
+        return text;
+    }
+
+    // true while any gd popup (FLAlertLayer / geode Popup) is on screen
+    bool gdPopupOpen() {
+        auto* scene = CCDirector::get()->getRunningScene();
+        return scene && scene->getChildByType<FLAlertLayer>(0) != nullptr;
+    }
+
+    CCLabelBMFont* makeLabel(std::string const& rawText, bool isDisplay, float scale, ccColor3B color) {
+        std::string text = capFirst(rawText);
         auto* label = CCLabelBMFont::create(text.c_str(), isDisplay ? displayFont() : bodyFont());
         if (!label) {
             return nullptr;
@@ -2699,7 +2729,12 @@ finally {
 
     // small credits button, pinned to the top right of the settings card
     CCRect creditsRect() {
-        return CCRect(CONTENT_RIGHT - 20.f - 62.f, LOG_HEADER_Y - 12.f, 62.f, 24.f);
+        return CCRect(CONTENT_RIGHT - 20.f - 62.f, CARD_TOP - 30.f, 62.f, 24.f);
+    }
+
+    // small violet tutorial button, pinned to the top left of the settings card
+    CCRect tutorialBtnRect() {
+        return CCRect(CONTENT_X + 20.f, CARD_TOP - 30.f, 70.f, 24.f);
     }
 
     CCRect configButtonRect(int index) {
@@ -2709,7 +2744,13 @@ finally {
     }
 
     CCRect swatchRect(int index) {
-        return CCRect(SWATCH_X + static_cast<float>(index) * (SWATCH_WIDTH + SWATCH_GAP), SWATCH_Y, SWATCH_WIDTH, SWATCH_HEIGHT);
+        int col = index % THEME_PER_ROW;
+        int row = index / THEME_PER_ROW;
+        return CCRect(
+            SWATCH_X + static_cast<float>(col) * (SWATCH_WIDTH + SWATCH_GAP),
+            SWATCH_Y - static_cast<float>(row) * (SWATCH_HEIGHT + SWATCH_GAP),
+            SWATCH_WIDTH, SWATCH_HEIGHT
+        );
     }
 
     CCRect settingsRowRect(int row) {
@@ -2828,6 +2869,7 @@ finally {
     }
 
     std::string fitLogLine(CCLabelBMFont* label, std::string text, float maxWidth) {
+        text = capFirst(text);
         if (!label) {
             return text;
         }
@@ -2941,7 +2983,8 @@ finally {
             "pick a theme to change the panel colors.",
             "glow turns the soft glow behind the panel on or off.",
             "terminal shows or hides the terminal button (pc only).",
-            "credits (top right) shows who helped make this.",
+            "the violet tutorial button (top left) replays this tour.",
+            "the yellow credits button (top right) shows who helped.",
             "export copies your tuning as json, import loads it back.",
         }, TF_TAB2, true, TF_SWATCHES, TF_CONFIG });
         steps.push_back({ "you're all set", -1, {
@@ -2985,9 +3028,9 @@ finally {
                 STAGE_BAR_WIDTH + 14.f, STAGE_TIMING_ALL_Y - STAGE_TIMING_WAVE_Y + 40.f
             );
             case TF_SWATCHES: return CCRect(
-                SWATCH_X, SWATCH_Y,
-                static_cast<float>(THEME_COUNT) * SWATCH_WIDTH + static_cast<float>(THEME_COUNT - 1) * SWATCH_GAP,
-                SWATCH_HEIGHT
+                SWATCH_X, SWATCH_Y - (SWATCH_HEIGHT + SWATCH_GAP),
+                static_cast<float>(THEME_PER_ROW) * SWATCH_WIDTH + static_cast<float>(THEME_PER_ROW - 1) * SWATCH_GAP,
+                SWATCH_HEIGHT * 2.f + SWATCH_GAP
             );
             case TF_CONFIG: {
                 auto first = configButtonRect(0);
@@ -3219,6 +3262,12 @@ finally {
         CCNode* m_exportButton = nullptr;
         CCNode* m_tutorialButton = nullptr;
         CCNode* m_creditsButton = nullptr;
+        CCLabelBMFont* m_tipLabel = nullptr;
+        float m_tipClock = 0.f;
+        int m_tipIndex = -1;
+        float m_tipLeft = 0.f;
+        float m_tipRight = 0.f;
+        void showRandomTip();
         int m_activeTab = 0;
         CCDrawNode* m_chipBar = nullptr;
         CCLabelBMFont* m_chipLabels[CHIP_COUNT] = {};
@@ -3341,6 +3390,7 @@ finally {
         m_exportButton = nullptr;
         m_tutorialButton = nullptr;
         m_creditsButton = nullptr;
+        m_tipLabel = nullptr;
         m_modeIcons.clear();
         for (int index = 0; index < LOG_LINE_COUNT; ++index) { m_activityLines[index] = nullptr; }
         for (int index = 0; index < STAGE_MAX_STAGES; ++index) { m_stageNameLabels[index] = nullptr; }
@@ -3425,6 +3475,13 @@ finally {
         brandName->setAnchorPoint(CCPoint(0.f, 0.5f));
         brandName->setPosition(CCPoint(MARGIN + 42.f, HEADER_Y));
         m_deck->addChild(brandName, 3);
+
+        m_tipLeft = brandName->getPositionX() + brandName->getContentSize().width * brandName->getScale() + 18.f;
+        m_tipRight = CONTENT_RIGHT - 170.f - 34.f;
+        m_tipLabel = makeLabel("", false, 0.56f, faintTextColor());
+        m_tipLabel->setAnchorPoint(CCPoint(0.f, 0.5f));
+        m_tipLabel->setPosition(CCPoint(m_tipLeft, HEADER_Y));
+        m_deck->addChild(m_tipLabel, 3);
 
         m_statusBeacon = makeDrawNode();
         m_deck->addChild(m_statusBeacon, 2);
@@ -3574,7 +3631,7 @@ finally {
         // ---- settings pane ----------------------------------------------------
         m_settingsHeaderLabel = makeLabel("appearance", true, 0.62f, logTextColor());
         m_settingsHeaderLabel->setAnchorPoint(CCPoint(0.f, 0.5f));
-        m_settingsHeaderLabel->setPosition(CCPoint(LOG_X + 22.f, LOG_HEADER_Y));
+        m_settingsHeaderLabel->setPosition(CCPoint(tutorialBtnRect().getMaxX() + 16.f, tutorialBtnRect().getMidY()));
         m_deck->addChild(m_settingsHeaderLabel, 3);
 
         m_settingsBar = makeDrawNode();
@@ -3638,32 +3695,31 @@ finally {
 
         m_importButton = makeDeckButton(m_deck, configButtonRect(0), "import", false, false, 0.58f);
         m_exportButton = makeDeckButton(m_deck, configButtonRect(1), "export", false, false, 0.58f);
-        m_tutorialButton = makeDeckButton(m_deck, configButtonRect(2), "tutorial", false, false, 0.58f, true);
 
         m_configStatusLabel = makeLabel("", false, 0.54f, faintTextColor());
         m_configStatusLabel->setAnchorPoint(CCPoint(0.f, 0.5f));
-        m_configStatusLabel->setPosition(CCPoint(configButtonRect(2).getMaxX() + 14.f, CONFIG_BUTTON_Y));
+        m_configStatusLabel->setPosition(CCPoint(configButtonRect(1).getMaxX() + 14.f, CONFIG_BUTTON_Y));
         m_deck->addChild(m_configStatusLabel, 3);
 
-        {
-            // small yellow credits button, always pinned top right of settings
-            auto rect = creditsRect();
+        // small tinted tags pinned to the top corners of the settings card
+        auto makeTag = [&](CCRect const& rect, char const* text, ccColor3B tint) {
             auto* button = CCNode::create();
             button->setContentSize(CCSize(rect.size.width, rect.size.height));
             button->setAnchorPoint(CCPoint(0.5f, 0.5f));
             button->setPosition(CCPoint(rect.getMidX(), rect.getMidY()));
             auto* back = makeDrawNode();
-            ccColor3B gold = color3(255, 214, 72);
-            drawCurvedRect(back, CCRect(0.f, 0.f, rect.size.width, rect.size.height), 6.f, color4(gold, 34), color4(gold, 130), 1.f);
+            drawCurvedRect(back, CCRect(0.f, 0.f, rect.size.width, rect.size.height), 6.f, color4(tint, 34), color4(tint, 130), 1.f);
             button->addChild(back);
-            if (auto* label = makeLabel("credits", false, 0.5f, gold)) {
+            if (auto* label = makeLabel(text, false, 0.5f, tint)) {
                 label->setPosition(CCPoint(rect.size.width * 0.5f, rect.size.height * 0.5f));
                 fitLabelToWidth(label, rect.size.width - 10.f);
                 button->addChild(label);
             }
-            m_deck->addChild(button, 4);
-            m_creditsButton = button;
-        }
+            m_deck->addChild(button, 6);
+            return button;
+        };
+        m_tutorialButton = makeTag(tutorialBtnRect(), "tutorial", color3(170, 120, 255));
+        m_creditsButton = makeTag(creditsRect(), "credits", color3(255, 214, 72));
 
         applyTab();
         buildTutorialLayer();
@@ -3680,6 +3736,7 @@ finally {
         buildDeck();
         layout();
         refresh();
+        showRandomTip();
         if (m_isOpen) {
             m_deck->setVisible(true);
         }
@@ -3880,19 +3937,19 @@ finally {
             m_stageIndexLabel->setColor(live);
         }
         if (m_stageNameLabel) {
-            m_stageNameLabel->setString(stageTitleAt(state.stageIndex).c_str());
+            m_stageNameLabel->setString(capFirst(stageTitleAt(state.stageIndex)).c_str());
             m_stageNameLabel->setColor(state.isEnabled ? color3(240, 241, 246) : warningColor());
         }
         if (m_stageDescriptionLabel) {
             auto description = state.isEnabled
                 ? fmt::format("{} ticks all  /  {} ticks wave", state.ticksAllModes, state.ticksWaveMode)
                 : std::string("raw input / stage disabled");
-            m_stageDescriptionLabel->setString(description.c_str());
+            m_stageDescriptionLabel->setString(capFirst(description).c_str());
             m_stageDescriptionLabel->setColor(state.isEnabled ? softTextColor() : warningColor());
         }
 
         if (m_statusLabel) {
-            m_statusLabel->setString(state.isEnabled ? "buffer on" : "buffer off");
+            m_statusLabel->setString(state.isEnabled ? "Buffer on" : "Buffer off");
             m_statusLabel->setColor(state.isEnabled ? secondaryColor() : warningColor());
 
             float labelWidth = m_statusLabel->getContentSize().width * m_statusLabel->getScale();
@@ -4053,7 +4110,7 @@ finally {
                 if (m_tickValueLabels[row]) {
                     int ticks = row == 0 ? shownAll : shownWave;
                     m_tickValueLabels[row]->setScale(0.62f * getUIFontScale());
-                    m_tickValueLabels[row]->setString(state.isEnabled ? fmt::format("{}t", ticks).c_str() : "off");
+                    m_tickValueLabels[row]->setString(state.isEnabled ? fmt::format("{}t", ticks).c_str() : "Off");
                     m_tickValueLabels[row]->setColor(state.isEnabled ? color3(240, 241, 246) : warningColor());
                     fitLabelToWidth(m_tickValueLabels[row], TICK_VALUE_W - 10.f);
                     m_tickValueLabels[row]->setVisible(showStageTab && !isCustomSelected);
@@ -4134,19 +4191,19 @@ finally {
                     && (customStage->ticksAll > CUSTOM_TICKS_SAFE || customStage->ticksWave > CUSTOM_TICKS_SAFE);
                 m_stageTimingLabels[2]->setColor(overSafeTicks ? warningColor() : faintTextColor());
                 if (!state.isEnabled) {
-                    m_stageTimingLabels[2]->setString("raw input, nothing is buffered");
+                    m_stageTimingLabels[2]->setString(capFirst(std::string("raw input, nothing is buffered")).c_str());
                 }
                 else if (overSafeTicks) {
-                    m_stageTimingLabels[2]->setString(fmt::format("warning: over {} ticks may lag or work worse than {}", CUSTOM_TICKS_SAFE, CUSTOM_TICKS_SAFE).c_str());
+                    m_stageTimingLabels[2]->setString(capFirst(fmt::format("warning: over {} ticks may lag or work worse than {}", CUSTOM_TICKS_SAFE, CUSTOM_TICKS_SAFE)).c_str());
                 }
                 else if (isCustomSelected) {
-                    m_stageTimingLabels[2]->setString(fmt::format("tune each delay with -5 / -1 / +1 / +5, up to {} ticks", CUSTOM_TICKS_MAX).c_str());
+                    m_stageTimingLabels[2]->setString(capFirst(fmt::format("tune each delay with -5 / -1 / +1 / +5, up to {} ticks", CUSTOM_TICKS_MAX)).c_str());
                 }
                 else if (canAddCustom) {
-                    m_stageTimingLabels[2]->setString("tap + custom to make an editable copy of this stage");
+                    m_stageTimingLabels[2]->setString(capFirst(std::string("tap + custom to make an editable copy of this stage")).c_str());
                 }
                 else {
-                    m_stageTimingLabels[2]->setString("custom stage limit reached");
+                    m_stageTimingLabels[2]->setString(capFirst(std::string("custom stage limit reached")).c_str());
                 }
             }
         }
@@ -4223,12 +4280,12 @@ finally {
 
         if (m_settingsValueLabels[0]) {
             bool glowOn = getUIGlow();
-            m_settingsValueLabels[0]->setString(glowOn ? "glow  on" : "glow  off");
+            m_settingsValueLabels[0]->setString(glowOn ? "Glow  on" : "Glow  off");
             m_settingsValueLabels[0]->setColor(glowOn ? logTextColor() : faintTextColor());
         }
         if (m_settingsValueLabels[1]) {
             bool terminalOn = isTerminalEnabled();
-            m_settingsValueLabels[1]->setString(terminalOn ? "terminal  on" : "terminal  off");
+            m_settingsValueLabels[1]->setString(terminalOn ? "Terminal  on" : "Terminal  off");
             m_settingsValueLabels[1]->setColor(terminalOn ? logTextColor() : faintTextColor());
         }
 
@@ -4271,8 +4328,48 @@ finally {
         if (m_panelHintKeyLabel) { m_panelHintKeyLabel->setVisible(false); }
         if (m_panelHintLabel) { m_panelHintLabel->setVisible(false); }
     }
-    void AfterflowOverlay::tickRefresh(float) {
+    void AfterflowOverlay::showRandomTip() {
+        if (!m_tipLabel) {
+            return;
+        }
+        bool const mobile = isMobileHost();
+        std::vector<std::string> tips = {
+            "Don't know what you're doing? Check the tutorial in settings",
+            "Tap the afterflow logo to replay the tutorial",
+            "Higher stages can correct earlier clicks",
+            "4 ticks is one frame at 60 fps",
+            "Custom stages let you tune the delay yourself",
+            "Export your config to back up your tuning",
+            "Try a new theme in settings",
+            "Going over 120 ticks may lag",
+            "Copy the log when you report a bug",
+            "The last stage is off, your clicks stay untouched",
+        };
+        if (!mobile) {
+            tips.push_back(fmt::format("Press {} to open or close this panel", panelKey()));
+            tips.push_back(fmt::format("Press {} to cycle stages", stageKey()));
+        }
+        static std::mt19937 rng{ std::random_device{}() };
+        int pick = m_tipIndex;
+        for (int attempt = 0; attempt < 8 && pick == m_tipIndex; ++attempt) {
+            pick = static_cast<int>(rng() % tips.size());
+        }
+        m_tipIndex = pick;
+        m_tipLabel->setString(capFirst(tips[pick]).c_str());
+        m_tipLabel->setScale(0.56f * getUIFontScale());
+        fitLabelToWidth(m_tipLabel, m_tipRight - m_tipLeft);
+        m_tipLabel->stopAllActions();
+        m_tipLabel->setOpacity(0);
+        m_tipLabel->runAction(CCFadeTo::create(0.35f, 255));
+        m_tipClock = 0.f;
+    }
+
+    void AfterflowOverlay::tickRefresh(float dt) {
         if (m_isOpen) {
+            m_tipClock += dt;
+            if (m_tipClock >= 9.f) {
+                showRandomTip();
+            }
             refresh();
         }
     }
@@ -4291,6 +4388,7 @@ finally {
         pauseForPanel();
         layout();
         refresh();
+        showRandomTip();
         schedule(schedule_selector(AfterflowOverlay::tickRefresh), 0.2f);
         schedule(schedule_selector(AfterflowOverlay::animTick));
 
@@ -4402,6 +4500,12 @@ finally {
 
     bool AfterflowOverlay::ccTouchBegan(CCTouch* touch, CCEvent*) {
         if (!touch) {
+            return false;
+        }
+        // a gd popup is on top: the panel ignores touches completely
+        if (gdPopupOpen()) {
+            m_pressedTarget = HitTarget::None;
+            m_pressedStageSlot = -1;
             return false;
         }
         if (m_isOpen) {
@@ -5135,6 +5239,12 @@ finally {
         if (logoRect().containsPoint(point)) {
             return HitTarget::Logo;
         }
+        if (m_activeTab == 2 && creditsRect().containsPoint(point)) {
+            return HitTarget::Credits;
+        }
+        if (m_activeTab == 2 && tutorialBtnRect().containsPoint(point)) {
+            return HitTarget::ReplayTutorial;
+        }
         for (int tabIndex = 0; tabIndex < TAB_COUNT; ++tabIndex) {
             if (tabSlotRect(tabIndex).containsPoint(point)) {
                 if (stageSlot) { *stageSlot = tabIndex; }
@@ -5143,6 +5253,9 @@ finally {
         }
         if (m_activeTab == 2 && creditsRect().containsPoint(point)) {
             return HitTarget::Credits;
+        }
+        if (m_activeTab == 2 && tutorialBtnRect().containsPoint(point)) {
+            return HitTarget::ReplayTutorial;
         }
         if (m_activeTab == 2) {
             for (int index = 0; index < THEME_COUNT; ++index) {
@@ -5166,10 +5279,6 @@ finally {
             if (configButtonRect(1).containsPoint(point)) {
                 if (stageSlot) { *stageSlot = 1; }
                 return HitTarget::ExportConfig;
-            }
-            if (configButtonRect(2).containsPoint(point)) {
-                if (stageSlot) { *stageSlot = 2; }
-                return HitTarget::ReplayTutorial;
             }
         }
         if (CCRect(DISMISS_X, DISMISS_Y, DISMISS_WIDTH, DISMISS_HEIGHT).containsPoint(point)) {
@@ -5292,7 +5401,7 @@ finally {
                 "Credits",
                 "<cy>Sir Abraham Creakstopher the second</c> - baller.w21 made mobile support and a ton of stuff\n"
                 "<cy>Legion</c> - nyxx6_1 gave a ton of ideas",
-                "thank you"
+                "Thank you"
             )->show();
             return;
         }
@@ -5387,7 +5496,7 @@ finally {
             return;
         }
         m_configStatusLabel->stopAllActions();
-        m_configStatusLabel->setString(text.c_str());
+        m_configStatusLabel->setString(capFirst(text).c_str());
         m_configStatusLabel->setColor(ok ? accentColor() : warningColor());
         m_configStatusLabel->setOpacity(255);
         m_configStatusLabel->runAction(CCSequence::create(
@@ -5603,12 +5712,12 @@ finally {
         bool didCopy = geode::utils::clipboard::write(text.c_str());
         if (m_copyLabel) {
             m_copyLabel->stopAllActions();
-            m_copyLabel->setString(didCopy ? "copied" : "failed");
+            m_copyLabel->setString(didCopy ? "Copied" : "Failed");
             m_copyLabel->runAction(CCSequence::create(
                 CCDelayTime::create(1.2f),
                 CallFuncExt::create([this] {
                     if (m_copyLabel) {
-                        m_copyLabel->setString("copy");
+                        m_copyLabel->setString("Copy");
                     }
                 }),
                 nullptr
