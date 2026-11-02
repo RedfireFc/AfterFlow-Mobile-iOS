@@ -1,3 +1,13 @@
+# v2.4.5
+- theme changes now animate the panel transition.
+- mode icon active state changes animate their scale and opacity.
+- Android build continues to use the Geode version declared in mod.json for SDK compatibility.
+
+# v2.4.4
+- custom stages can now be added without a fixed four-stage cap.
+- stage buttons stay readable; scroll or swipe the stage strip to browse more, then select a stage with a tap or click.
+- custom-stage labels are stored dynamically, and rename remains available by holding a custom stage on mobile or right-clicking it on desktop.
+
 # v2.4.1
 
 - **mobile pause menu button**: android and ios now get an AF button in the pause menu, directly under the settings button and the same size as it. tap it to open the control panel.
@@ -106,3 +116,4 @@ macos support
 # v1.0.0
 
 inital release
+
