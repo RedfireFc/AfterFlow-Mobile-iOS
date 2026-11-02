@@ -3160,6 +3160,58 @@ finally {
         }
     };
 
+    // ---------------------------------------------------------------------
+    // lazy hook installation (ios only)
+    //
+    // every gameplay hook is created switched off and is only enabled the first
+    // time the control panel is opened, behind a loading screen. only the menu and
+    // pause button hooks (the ways to reach the panel) are enabled at launch.
+    // ---------------------------------------------------------------------
+#ifdef GEODE_IS_IOS
+    constexpr bool LAZY_HOOKS = true;
+#else
+    constexpr bool LAZY_HOOKS = false;
+#endif
+
+    struct LazyHookEntry {
+        std::string name;
+        Hook* hook;
+    };
+
+    std::vector<LazyHookEntry>& lazyHooks() {
+        static std::vector<LazyHookEntry> hooks;
+        return hooks;
+    }
+
+    std::unordered_set<std::string>& skippedHooks() {
+        static std::unordered_set<std::string> hooks;
+        return hooks;
+    }
+
+    bool g_hooksReady = !LAZY_HOOKS;
+
+    template <class Self>
+    void deferHooks(Self& self, std::initializer_list<char const*> names) {
+        if (!LAZY_HOOKS) {
+            return;
+        }
+        for (auto const* name : names) {
+            auto found = self.getHook(name);
+            if (!found) {
+                log::warn("afterflow: could not find hook {} to defer", name);
+                continue;
+            }
+            found.unwrap()->setAutoEnable(false);
+            lazyHooks().push_back({ name, found.unwrap() });
+        }
+    }
+
+    bool hooksReady() {
+        return g_hooksReady || !LAZY_HOOKS;
+    }
+
+    void installHooksThen(std::function<void()> onReady);
+
     class AfterflowOverlay : public CCLayer {
     public:
         static AfterflowOverlay* create();
@@ -4655,6 +4707,17 @@ finally {
 
     void AfterflowOverlay::openPanel() {
         if (m_isOpen) {
+            return;
+        }
+        if (!hooksReady()) {
+            // first open this session: install the hooks behind a loading screen,
+            // then open the panel
+            Ref<AfterflowOverlay> keepAlive = this;
+            installHooksThen([keepAlive]() {
+                if (keepAlive->getParent()) {
+                    keepAlive->openPanel();
+                }
+            });
             return;
         }
         m_isOpen = true;
@@ -6262,6 +6325,280 @@ finally {
         }
     }
 
+    // if the game crashed while a hook was being installed, remember it and skip
+    // that hook from now on so the game stops crash looping
+    void recoverFromHookCrash() {
+        if (!LAZY_HOOKS) {
+            return;
+        }
+        auto* mod = Mod::get();
+        std::string version = mod->getVersion().toVString();
+        if (mod->getSavedValue<std::string>("skipped-hooks-version", "") != version) {
+            // new version: give every hook another chance
+            mod->setSavedValue<std::string>("skipped-hooks", "");
+            mod->setSavedValue<std::string>("skipped-hooks-version", version);
+        }
+        std::string raw = mod->getSavedValue<std::string>("skipped-hooks", "");
+        std::string pending = mod->getSavedValue<std::string>("hook-in-progress", "");
+        if (!pending.empty()) {
+            log::warn("afterflow: the game crashed while installing {}, it will be skipped", pending);
+            if (!raw.empty()) {
+                raw += ';';
+            }
+            raw += pending;
+            mod->setSavedValue<std::string>("skipped-hooks", raw);
+            mod->setSavedValue<std::string>("hook-in-progress", "");
+            (void)mod->saveData();
+        }
+        size_t start = 0;
+        while (start <= raw.size()) {
+            size_t end = raw.find(';', start);
+            if (end == std::string::npos) {
+                end = raw.size();
+            }
+            if (end > start) {
+                skippedHooks().insert(raw.substr(start, end - start));
+            }
+            start = end + 1;
+        }
+    }
+
+    // loading screen shown while the hooks are enabled one by one
+    class HookLoaderLayer : public CCLayerColor {
+    public:
+        static HookLoaderLayer* create(std::function<void()> onReady) {
+            auto* layer = new HookLoaderLayer();
+            layer->m_onReady = std::move(onReady);
+            if (layer->init()) {
+                layer->autorelease();
+                return layer;
+            }
+            CC_SAFE_DELETE(layer);
+            return nullptr;
+        }
+
+        bool init() override {
+            if (!CCLayerColor::initWithColor(ccc4(6, 8, 12, 225))) {
+                return false;
+            }
+            this->setTouchEnabled(true);
+            this->setKeypadEnabled(true);
+
+            auto winSize = CCDirector::get()->getWinSize();
+            this->setContentSize(winSize);
+            this->ignoreAnchorPointForPosition(false);
+            this->setAnchorPoint(CCPoint(0.f, 0.f));
+            this->setPosition(CCPoint(0.f, 0.f));
+
+            auto* root = CCNode::create();
+            root->setPosition(CCPoint(winSize.width * 0.5f, winSize.height * 0.5f));
+            this->addChild(root, 1);
+
+            auto* panel = makeDrawNode();
+            drawCurvedRect(
+                panel, CCRect(-PANEL_W * 0.5f, -PANEL_H * 0.5f, PANEL_W, PANEL_H), 10.f,
+                color4(18, 19, 24, 248), color4(accentColor(), 130), 1.f
+            );
+            root->addChild(panel);
+
+            m_title = makeLabel("Please wait...", true, 0.62f, color3(242, 243, 248));
+            m_title->setAnchorPoint(CCPoint(0.f, 0.5f));
+            m_titleWidth = m_title->getContentSize().width * m_title->getScale();
+            m_title->setPosition(CCPoint(-m_titleWidth * 0.5f, 24.f));
+            root->addChild(m_title, 2);
+
+            m_barBack = makeDrawNode();
+            drawCurvedRect(
+                m_barBack, CCRect(-BAR_W * 0.5f, -BAR_H * 0.5f, BAR_W, BAR_H), BAR_H * 0.5f,
+                color4(255, 255, 255, 34), color4(0, 0, 0, 0), 0.f
+            );
+            m_barBack->setPosition(CCPoint(0.f, 0.f));
+            root->addChild(m_barBack, 1);
+
+            m_barFill = makeDrawNode();
+            m_barFill->setPosition(CCPoint(0.f, 0.f));
+            root->addChild(m_barFill, 2);
+
+            m_detail = makeLabel("Getting ready", false, 0.4f, faintTextColor());
+            m_detail->setPosition(CCPoint(0.f, -22.f));
+            root->addChild(m_detail, 2);
+
+            this->scheduleUpdate();
+            return true;
+        }
+
+        // above the control panel (-1000) and the update overlay (-500)
+        void registerWithTouchDispatcher() override {
+            CCTouchDispatcher::get()->addTargetedDelegate(this, -2000, true);
+        }
+        bool ccTouchBegan(CCTouch*, CCEvent*) override { return true; }
+        void ccTouchMoved(CCTouch*, CCEvent*) override {}
+        void ccTouchEnded(CCTouch*, CCEvent*) override {}
+        void ccTouchCancelled(CCTouch*, CCEvent*) override {}
+        void keyBackClicked() override {}
+
+        void update(float dt) override {
+            m_elapsed += dt;
+
+            // Please wait. -> Please wait.. -> Please wait...
+            int dotCount = 1 + static_cast<int>(m_elapsed / 0.35f) % 3;
+            if (dotCount != m_dotCount) {
+                m_dotCount = dotCount;
+                m_title->setString(("Please wait" + std::string(static_cast<size_t>(dotCount), '.')).c_str());
+            }
+
+            if (!m_done) {
+                m_stepClock += dt;
+                if (m_stepClock >= STEP_TIME) {
+                    m_stepClock = 0.f;
+                    step();
+                }
+                // never trap the player here if something goes wrong
+                if (m_elapsed > 30.f) {
+                    finish();
+                }
+            }
+            else {
+                m_holdClock -= dt;
+                if (m_holdClock <= 0.f) {
+                    leave();
+                    return;
+                }
+            }
+
+            auto& hooks = lazyHooks();
+            float target = hooks.empty() ? 1.f : static_cast<float>(m_index) / static_cast<float>(hooks.size());
+            if (m_done) {
+                target = 1.f;
+            }
+            m_shown += (target - m_shown) * std::min(1.f, dt * 10.f);
+            drawBar();
+        }
+
+    private:
+        static constexpr float PANEL_W = 250.f;
+        static constexpr float PANEL_H = 92.f;
+        static constexpr float BAR_W = 190.f;
+        static constexpr float BAR_H = 6.f;
+        static constexpr float STEP_TIME = 0.035f;
+
+        void drawBar() {
+            m_barFill->clear();
+            float width = BAR_W * std::clamp(m_shown, 0.f, 1.f);
+            if (width >= BAR_H) {
+                drawCurvedRect(
+                    m_barFill, CCRect(-BAR_W * 0.5f, -BAR_H * 0.5f, width, BAR_H), BAR_H * 0.5f,
+                    color4(accentColor(), 255), color4(0, 0, 0, 0), 0.f
+                );
+            }
+        }
+
+        void setDetail(std::string const& text) {
+            m_detail->setString(capFirst(text).c_str());
+            m_detail->setScale(0.4f * getUIFontScale());
+            fitLabelToWidth(m_detail, PANEL_W - 28.f);
+        }
+
+        // two frames per hook: first show its name, then install it, so the
+        // name on screen is always the one being installed right now
+        void step() {
+            auto& hooks = lazyHooks();
+            if (m_index >= hooks.size()) {
+                finish();
+                return;
+            }
+            auto& entry = hooks[m_index];
+            if (m_phase == 0) {
+                if (skippedHooks().count(entry.name)) {
+                    setDetail(fmt::format("Skipping {} (crashed before)", entry.name));
+                    ++m_skipped;
+                    ++m_index;
+                    return;
+                }
+                setDetail(fmt::format("Installing {} ({}/{})", entry.name, m_index + 1, hooks.size()));
+                m_phase = 1;
+                return;
+            }
+            // remembered on disk first, so a crash inside enable() is blamed on this hook
+            auto* mod = Mod::get();
+            mod->setSavedValue<std::string>("hook-in-progress", entry.name);
+            (void)mod->saveData();
+            auto result = entry.hook->enable();
+            if (!result) {
+                log::warn("afterflow: could not enable {}: {}", entry.name, result.unwrapErr());
+                ++m_failed;
+            }
+            ++m_index;
+            m_phase = 0;
+        }
+
+        void finish() {
+            if (m_done) {
+                return;
+            }
+            m_done = true;
+            g_hooksReady = true;
+            auto* mod = Mod::get();
+            mod->setSavedValue<std::string>("hook-in-progress", "");
+            (void)mod->saveData();
+            std::string text = "Done";
+            if (m_failed > 0 || m_skipped > 0) {
+                text = fmt::format("Done, {} hooks skipped", m_failed + m_skipped);
+            }
+            m_holdClock = 0.35f;
+            if (PlayLayer::get()) {
+                text += ". Restart the level to use it";
+                m_holdClock = 1.4f;
+            }
+            setDetail(text);
+        }
+
+        void leave() {
+            auto onReady = std::move(m_onReady);
+            m_onReady = nullptr;
+            this->unscheduleUpdate();
+            this->retain();
+            this->removeFromParentAndCleanup(true);
+            if (onReady) {
+                onReady();
+            }
+            this->release();
+        }
+
+        std::function<void()> m_onReady;
+        CCLabelBMFont* m_title = nullptr;
+        CCLabelBMFont* m_detail = nullptr;
+        CCDrawNode* m_barBack = nullptr;
+        CCDrawNode* m_barFill = nullptr;
+        float m_titleWidth = 0.f;
+        float m_elapsed = 0.f;
+        float m_stepClock = 0.f;
+        float m_holdClock = 0.f;
+        float m_shown = 0.f;
+        size_t m_index = 0;
+        int m_phase = 0;
+        int m_dotCount = 3;
+        int m_failed = 0;
+        int m_skipped = 0;
+        bool m_done = false;
+    };
+
+    void installHooksThen(std::function<void()> onReady) {
+        if (hooksReady()) {
+            if (onReady) {
+                onReady();
+            }
+            return;
+        }
+        auto* scene = CCScene::get();
+        if (!scene || scene->getChildByType<HookLoaderLayer>(0)) {
+            return;
+        }
+        if (auto* layer = HookLoaderLayer::create(std::move(onReady))) {
+            scene->addChild(layer, 20000);
+        }
+    }
+
     void dropGhosts() {
         for (auto** ghostSlot : { &state.ghostPlayer1, &state.ghostPlayer2 }) {
             if (*ghostSlot) {
@@ -7622,6 +7959,8 @@ finally {
 
 $on_mod(Loaded) {
 
+    recoverFromHookCrash();
+
     constexpr int STAGE_SCHEMA_VERSION = 2;
     int savedStageIndex = std::clamp(Mod::get()->getSavedValue<int>("stage", 0), 0, stageTotalCount() - 1);
     if (Mod::get()->getSavedValue<int>("stage-schema", 1) < STAGE_SCHEMA_VERSION) {
@@ -7690,6 +8029,7 @@ $on_mod(Loaded) {
 
 class $modify(BufPlayLayer, PlayLayer) {
     static void onModify(auto& self) {
+        deferHooks(self, { "PlayLayer::destroyPlayer", "PlayLayer::init", "PlayLayer::onQuit", "PlayLayer::resetLevel", "PlayLayer::pauseGame", "PlayLayer::resume", "PlayLayer::playEndAnimationToPos" });
         (void)self.setHookPriority("PlayLayer::destroyPlayer", MOD_HOOK_PRIORITY);
         (void)self.setHookPriority("PlayLayer::playEndAnimationToPos", MOD_HOOK_PRIORITY);
         (void)self.setHookPriority("PlayLayer::pauseGame", MOD_HOOK_PRIORITY);
@@ -7899,6 +8239,10 @@ class $modify(BufMenuLayer, MenuLayer) {
 };
 
 class $modify(BufEditorLayer, LevelEditorLayer) {
+    static void onModify(auto& self) {
+        deferHooks(self, { "LevelEditorLayer::init" });
+    }
+
     bool init(GJGameLevel* gameLevel, bool withoutUI) {
         bool isSuccess = LevelEditorLayer::init(gameLevel, withoutUI);
         dropGhosts();
@@ -7909,6 +8253,7 @@ class $modify(BufEditorLayer, LevelEditorLayer) {
 
 class $modify(BufHardStreak, HardStreak) {
     static void onModify(auto& self) {
+        deferHooks(self, { "HardStreak::addPoint" });
         (void)self.setHookPriority("HardStreak::addPoint", MOD_HOOK_PRIORITY);
     }
 
@@ -7922,6 +8267,7 @@ class $modify(BufHardStreak, HardStreak) {
 
 class $modify(BufEffectGameObject, EffectGameObject) {
     static void onModify(auto& self) {
+        deferHooks(self, { "EffectGameObject::triggerObject" });
         (void)self.setHookPriority("EffectGameObject::triggerObject", MOD_HOOK_PRIORITY);
     }
 
@@ -7935,6 +8281,7 @@ class $modify(BufEffectGameObject, EffectGameObject) {
 
 class $modify(BufGameObject, GameObject) {
     static void onModify(auto& self) {
+        deferHooks(self, { "GameObject::playShineEffect" });
         (void)self.setHookPriority("GameObject::playShineEffect", MOD_HOOK_PRIORITY);
     }
 
@@ -7948,6 +8295,7 @@ class $modify(BufGameObject, GameObject) {
 
 class $modify(BufRingObject, RingObject) {
     static void onModify(auto& self) {
+        deferHooks(self, { "RingObject::spawnCircle" });
         (void)self.setHookPriority("RingObject::spawnCircle", MOD_HOOK_PRIORITY);
     }
 
@@ -7961,6 +8309,7 @@ class $modify(BufRingObject, RingObject) {
 
 class $modify(BufPlayerObject, PlayerObject) {
     static void onModify(auto& self) {
+        deferHooks(self, { "PlayerObject::update", "PlayerObject::incrementJumps", "PlayerObject::ghostEffect", "PlayerObject::spawnCircle", "PlayerObject::spawnDualCircle", "PlayerObject::spawnPortalCircle", "PlayerObject::spawnScaleCircle", "PlayerObject::playBumpEffect", "PlayerObject::playSpawnEffect", "PlayerObject::createFadeOutDartStreak", "PlayerObject::fadeOutStreak2", "PlayerObject::playDynamicSpiderRun", "PlayerObject::animatePlatformerJump", "PlayerObject::runBallRotation", "PlayerObject::runBallRotation2", "PlayerObject::runNormalRotation", "PlayerObject::toggleGhostEffect", "PlayerObject::activateStreak", "PlayerObject::playSpiderDashEffect", "PlayerObject::playDeathEffect", "PlayerObject::playerDestroyed", "PlayerObject::playCompleteEffect", "PlayerObject::ringJump", "PlayerObject::startDashing" });
         (void)self.setHookPriority("PlayerObject::playSpiderDashEffect", MOD_HOOK_PRIORITY);
 
         (void)self.setHookPriority("PlayerObject::update", MOD_HOOK_PRIORITY);
@@ -8147,6 +8496,7 @@ class $modify(BufPlayerObject, PlayerObject) {
 
 class $modify(BufBaseGameLayer, GJBaseGameLayer) {
     static void onModify(auto& self) {
+        deferHooks(self, { "GJBaseGameLayer::canBeActivatedByPlayer", "GJBaseGameLayer::collisionCheckObjects", "GJBaseGameLayer::handleButton", "GJBaseGameLayer::playerTouchedRing", "GJBaseGameLayer::flipGravity", "GJBaseGameLayer::gameEventTriggered", "GJBaseGameLayer::toggleGroupTriggered", "GJBaseGameLayer::spawnGroup", "GJBaseGameLayer::toggleGroup", "GJBaseGameLayer::pickupItem", "GJBaseGameLayer::updateCounters", "GJBaseGameLayer::activateItemEditTrigger", "GJBaseGameLayer::activateItemCompareTrigger", "GJBaseGameLayer::playerWillSwitchMode" });
         (void)self.setHookPriority("GJBaseGameLayer::canBeActivatedByPlayer", MOD_HOOK_PRIORITY);
         (void)self.setHookPriority("GJBaseGameLayer::handleButton", MOD_HOOK_PRIORITY);
         (void)self.setHookPriority("GJBaseGameLayer::collisionCheckObjects", MOD_HOOK_PRIORITY);
