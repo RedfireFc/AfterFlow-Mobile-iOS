@@ -162,6 +162,17 @@ namespace {
         return std::clamp(value, CUSTOM_TICKS_MIN, CUSTOM_TICKS_MAX);
     }
 
+    // real popup shown when a custom delay crosses over the safe limit.
+    // the player has to press the button to dismiss it
+    void showHighTicksPopup() {
+        std::string message = fmt::format(
+            "delays over {0} ticks may lag or work worse than {0}.\n"
+            "your game might stutter or the stage might act weird.",
+            CUSTOM_TICKS_SAFE
+        );
+        FLAlertLayer::create("warning", message.c_str(), "ok i understand")->show();
+    }
+
     void loadCustomStages() {
         if (g_customStagesLoaded) {
             return;
@@ -2845,6 +2856,91 @@ finally {
         return nullptr;
     }
 
+    // ---- first-open tutorial ------------------------------------------------
+    constexpr char const* TUTORIAL_DONE_KEY = "tutorial-done";
+    constexpr float TUTORIAL_CARD_W = 500.f;
+    constexpr float TUTORIAL_CARD_H = 260.f;
+
+    struct TutorialStep {
+        std::string title;
+        int tab; // tab to show behind the card, -1 keeps the current one
+        std::vector<std::string> lines;
+    };
+
+    std::vector<TutorialStep> tutorialSteps() {
+        bool const mobile = isMobileHost();
+        std::vector<TutorialStep> steps;
+        steps.push_back({ "welcome to afterflow", -1, {
+            "afterflow fixes your early clicks so they land accurately.",
+            "this quick tour shows what each tab does.",
+            "it only takes a minute, and you can skip it right now.",
+        } });
+        steps.push_back({ "the panel", 0, {
+            "the game pauses while this panel is open.",
+            mobile ? std::string("close it any time with the x in the top right.")
+                   : fmt::format("close it with the x in the top right or {}.", panelKey()),
+            "the text at the top shows whether the buffer is on.",
+            "tap the afterflow logo any time to replay this tour.",
+        } });
+        TutorialStep logStep{ "log tab", 0, {
+            "a live feed of what afterflow is doing:",
+            "stage changes, prediction messages and update checks.",
+            "copy puts the whole log on your clipboard.",
+            "the chips at the bottom show which extras are on:",
+            "console, wave and path.",
+        } };
+        if (!mobile) {
+            logStep.lines.push_back("terminal opens the log in its own window.");
+        }
+        steps.push_back(logStep);
+        steps.push_back({ "stage tab", 1, {
+            "a stage is how far afterflow may delay a click to fix it.",
+            "the numbers are ticks: 4 ticks is one frame at 60 fps.",
+            "a higher stage can correct earlier clicks over a longer window.",
+            mobile ? std::string("tap a stage to switch to it.")
+                   : fmt::format("tap a stage to switch, or press {} to cycle them.", stageKey()),
+            "the last stage is off, so your clicks are left untouched.",
+        } });
+        steps.push_back({ "custom stages", 1, {
+            "tap + custom to copy the selected stage (up to 4).",
+            "then drag the slider, tap the number and type, or use",
+            "-5 / -1 / +1 / +5 to set the delay for all modes and wave.",
+            "remove deletes the selected custom stage.",
+            "going over 120 ticks may lag or work worse.",
+        } });
+        steps.push_back({ "settings tab", 2, {
+            "pick a theme to change the panel colors.",
+            "glow turns the soft glow behind the panel on or off.",
+            "terminal shows or hides the terminal button (pc only).",
+            "the mode icons show your icons in your colors. tap one",
+            "to change it, and the + adds another.",
+            "export copies your tuning as json, import loads it back.",
+        } });
+        steps.push_back({ "you're all set", -1, {
+            "that's everything.",
+            "tap the afterflow logo any time to see this tour again.",
+        } });
+        return steps;
+    }
+
+    CCRect tutorialCardRect() {
+        return CCRect((DECK_WIDTH - TUTORIAL_CARD_W) * 0.5f, (DECK_HEIGHT - TUTORIAL_CARD_H) * 0.5f, TUTORIAL_CARD_W, TUTORIAL_CARD_H);
+    }
+
+    CCRect tutorialSkipRect() {
+        auto card = tutorialCardRect();
+        return CCRect(card.getMinX() + 24.f, card.getMinY() + 18.f, 110.f, 34.f);
+    }
+
+    CCRect tutorialNextRect() {
+        auto card = tutorialCardRect();
+        return CCRect(card.getMaxX() - 24.f - 130.f, card.getMinY() + 18.f, 130.f, 34.f);
+    }
+
+    CCRect logoRect() {
+        return CCRect(MARGIN, HEADER_Y - 20.f, 150.f, 40.f);
+    }
+
     class AfterflowOverlay : public CCLayer {
     public:
         static AfterflowOverlay* create();
@@ -2887,6 +2983,9 @@ finally {
             TickAdjust,
             TickField,
             TickSlider,
+            TutorialSkip,
+            TutorialNext,
+            Logo,
         };
 
         void buildDeck();
@@ -2906,6 +3005,12 @@ finally {
         void pressTarget(HitTarget target);
         void restorePressed();
         void performTarget(HitTarget target);
+        void startTutorial();
+        void showTutorialStep();
+        void advanceTutorial();
+        void finishTutorial();
+        void buildTutorialLayer();
+        HitTarget tutorialHit(CCPoint const& point) const;
         void beginTickEdit(int row);
         void endTickEdit();
         void onTickInput(int row, std::string const& text);
@@ -2954,10 +3059,13 @@ finally {
         CCLabelBMFont* m_stageTimingLabels[4] = {};
         CCLabelBMFont* m_tickBtnLabels[8] = {};
         CCLabelBMFont* m_tickValueLabels[2] = {};
+        CCNode* m_tutorialLayer = nullptr;
+        int m_tutorialStep = -1;
         TextInput* m_tickInputs[2] = {};
         int m_editingRow = -1;
         bool m_suppressTickInput = false;
         bool m_draggingSlider = false;
+        bool m_sliderStartedOver = false;
         int m_sliderRow = -1;
         CCLabelBMFont* m_customAddLabel = nullptr;
         CCLabelBMFont* m_customRemoveLabel = nullptr;
@@ -3103,6 +3211,7 @@ finally {
         for (int index = 0; index < 8; ++index) { m_tickBtnLabels[index] = nullptr; }
         for (int index = 0; index < 2; ++index) { m_tickValueLabels[index] = nullptr; }
         for (int index = 0; index < 2; ++index) { m_tickInputs[index] = nullptr; }
+        m_tutorialLayer = nullptr;
         m_editingRow = -1;
         m_draggingSlider = false;
         m_customAddLabel = nullptr;
@@ -3398,6 +3507,7 @@ finally {
         updateModeIcons();
 
         applyTab();
+        buildTutorialLayer();
     }
 
     void AfterflowOverlay::rebuildDeck() {
@@ -3686,35 +3796,73 @@ finally {
 
             float const barHeight = 8.f;
             auto drawBar = [&](float y, int ticks, ccColor3B tint) {
+                // dark track with a faint outline
                 drawCurvedRect(
                     m_stageTrack,
                     CCRect(STAGE_BAR_X, y - barHeight * 0.5f, STAGE_BAR_WIDTH, barHeight),
-                    3.f,
-                    color4(255, 255, 255, 12),
-                    color4(0, 0, 0, 0),
-                    0.f
+                    3.5f,
+                    color4(0, 0, 0, 70),
+                    color4(255, 255, 255, 22),
+                    1.f
                 );
                 if (ticks > 0) {
                     float ratio = std::clamp(static_cast<float>(ticks) / static_cast<float>(barMax), 0.03f, 1.f);
                     if (isCustomSelected) {
-                        // custom stages use the same 1..120 mapping as the slider
+                        // custom stages use the same 1..CUSTOM_TICKS_MAX mapping as the slider
                         ratio = std::clamp(
                             static_cast<float>(ticks - CUSTOM_TICKS_MIN) / static_cast<float>(CUSTOM_TICKS_MAX - CUSTOM_TICKS_MIN),
                             0.f, 1.f
                         );
                     }
+                    float fillWidth = std::max(8.f, STAGE_BAR_WIDTH * ratio);
+                    // soft glow behind the fill
                     drawCurvedRect(
                         m_stageTrack,
-                        CCRect(STAGE_BAR_X, y - barHeight * 0.5f, std::max(6.f, STAGE_BAR_WIDTH * ratio), barHeight),
-                        3.f,
-                        color4(tint, 225),
+                        CCRect(STAGE_BAR_X - 1.5f, y - barHeight * 0.5f - 2.5f, fillWidth + 3.f, barHeight + 5.f),
+                        5.f,
+                        color4(tint, 38),
                         color4(0, 0, 0, 0),
                         0.f
                     );
+                    // solid neon fill
+                    drawCurvedRect(
+                        m_stageTrack,
+                        CCRect(STAGE_BAR_X, y - barHeight * 0.5f, fillWidth, barHeight),
+                        3.5f,
+                        color4(tint, 255),
+                        color4(tint, 255),
+                        1.f
+                    );
+                    // bright core line through the middle, like the old bar
+                    if (fillWidth > 10.f) {
+                        drawCurvedRect(
+                            m_stageTrack,
+                            CCRect(STAGE_BAR_X + 3.f, y - 1.25f, fillWidth - 6.f, 2.5f),
+                            1.2f,
+                            color4(255, 255, 255, 120),
+                            color4(0, 0, 0, 0),
+                            0.f
+                        );
+                    }
                     if (isCustomSelected) {
-                        CCPoint knob(STAGE_BAR_X + STAGE_BAR_WIDTH * ratio, y);
-                        m_stageTrack->drawDot(knob, 9.f, color4(tint, 255));
-                        m_stageTrack->drawDot(knob, 5.5f, color4(248, 249, 253, 255));
+                        // slim glowing handle so it reads as draggable
+                        float knobX = STAGE_BAR_X + STAGE_BAR_WIDTH * ratio;
+                        drawCurvedRect(
+                            m_stageTrack,
+                            CCRect(knobX - 5.f, y - 11.f, 10.f, 22.f),
+                            4.f,
+                            color4(tint, 55),
+                            color4(0, 0, 0, 0),
+                            0.f
+                        );
+                        drawCurvedRect(
+                            m_stageTrack,
+                            CCRect(knobX - 3.f, y - 9.f, 6.f, 18.f),
+                            2.8f,
+                            color4(235, 255, 250, 255),
+                            color4(tint, 255),
+                            1.f
+                        );
                     }
                 }
             };
@@ -3983,6 +4131,10 @@ finally {
         m_deck->setVisible(true);
         m_deck->setScale(m_deckScale * 0.96f);
         m_deck->runAction(CCEaseOut::create(CCScaleTo::create(0.22f, m_deckScale), 2.f));
+
+        if (m_tutorialStep < 0 && !Mod::get()->getSavedValue<bool>(TUTORIAL_DONE_KEY, false)) {
+            startTutorial();
+        }
     }
 
     void AfterflowOverlay::closePanel() {
@@ -4080,6 +4232,12 @@ finally {
         }
         if (m_isOpen) {
             CCPoint deckPoint = m_deck->convertToNodeSpace(touch->getLocation());
+            if (m_tutorialStep >= 0) {
+                // while the tour is up only its own buttons react
+                m_pressedTarget = tutorialHit(deckPoint);
+                m_pressedStageSlot = -1;
+                return true;
+            }
             if (!CCRect(0.f, 0.f, DECK_WIDTH, DECK_HEIGHT).containsPoint(deckPoint)) {
                 endTickEdit();
                 m_pressedTarget = HitTarget::Outside;
@@ -4095,6 +4253,11 @@ finally {
             if (m_pressedTarget == HitTarget::TickSlider) {
                 m_draggingSlider = true;
                 m_sliderRow = stageSlot;
+                m_sliderStartedOver = false;
+                if (auto* sliderStage = customStageFor(state.stageIndex)) {
+                    int startTicks = stageSlot == 0 ? sliderStage->ticksAll : sliderStage->ticksWave;
+                    m_sliderStartedOver = startTicks > CUSTOM_TICKS_SAFE;
+                }
                 setSliderFromX(deckPoint.x);
                 return true;
             }
@@ -4137,6 +4300,10 @@ finally {
             return;
         }
 
+        if (m_tutorialStep >= 0) {
+            return;
+        }
+
         if (m_draggingSlider) {
             if (m_isOpen) {
                 setSliderFromX(m_deck->convertToNodeSpace(touch->getLocation()).x);
@@ -4174,16 +4341,42 @@ finally {
         }
 
         if (m_draggingSlider) {
+            int releasedRow = m_sliderRow;
             m_draggingSlider = false;
             m_sliderRow = -1;
             m_pressedTarget = HitTarget::None;
             saveCustomStages();
+            if (releasedRow >= 0 && releasedRow <= 1 && !m_sliderStartedOver) {
+                if (auto* sliderStage = customStageFor(state.stageIndex)) {
+                    int endTicks = releasedRow == 0 ? sliderStage->ticksAll : sliderStage->ticksWave;
+                    if (endTicks > CUSTOM_TICKS_SAFE) {
+                        showHighTicksPopup();
+                    }
+                }
+            }
             return;
         }
 
         if (!m_isOpen) {
             restorePressed();
             m_pressedTarget = HitTarget::None;
+            return;
+        }
+
+        if (m_tutorialStep >= 0) {
+            HitTarget pressed = m_pressedTarget;
+            m_pressedTarget = HitTarget::None;
+            if (pressed == HitTarget::TutorialSkip || pressed == HitTarget::TutorialNext) {
+                CCPoint deckPoint = m_deck->convertToNodeSpace(touch->getLocation());
+                if (tutorialHit(deckPoint) == pressed) {
+                    if (pressed == HitTarget::TutorialSkip) {
+                        finishTutorial();
+                    }
+                    else {
+                        advanceTutorial();
+                    }
+                }
+            }
             return;
         }
 
@@ -4227,6 +4420,115 @@ finally {
         m_pressedTarget = HitTarget::None;
     }
 
+    AfterflowOverlay::HitTarget AfterflowOverlay::tutorialHit(CCPoint const& point) const {
+        if (m_tutorialStep < 0) {
+            return HitTarget::None;
+        }
+        bool const isLast = m_tutorialStep >= static_cast<int>(tutorialSteps().size()) - 1;
+        if (!isLast && tutorialSkipRect().containsPoint(point)) {
+            return HitTarget::TutorialSkip;
+        }
+        if (tutorialNextRect().containsPoint(point)) {
+            return HitTarget::TutorialNext;
+        }
+        return HitTarget::None;
+    }
+
+    void AfterflowOverlay::startTutorial() {
+        endTickEdit();
+        m_draggingSlider = false;
+        m_tutorialStep = 0;
+        showTutorialStep();
+    }
+
+    void AfterflowOverlay::showTutorialStep() {
+        auto steps = tutorialSteps();
+        if (m_tutorialStep < 0 || m_tutorialStep >= static_cast<int>(steps.size())) {
+            buildTutorialLayer();
+            return;
+        }
+        int tab = steps[m_tutorialStep].tab;
+        if (tab >= 0 && tab < TAB_COUNT && tab != m_activeTab) {
+            m_activeTab = tab;
+            applyTab();
+            refresh();
+        }
+        buildTutorialLayer();
+    }
+
+    void AfterflowOverlay::advanceTutorial() {
+        ++m_tutorialStep;
+        if (m_tutorialStep >= static_cast<int>(tutorialSteps().size())) {
+            finishTutorial();
+            return;
+        }
+        showTutorialStep();
+    }
+
+    void AfterflowOverlay::finishTutorial() {
+        m_tutorialStep = -1;
+        Mod::get()->setSavedValue<bool>(TUTORIAL_DONE_KEY, true);
+        (void)Mod::get()->saveData();
+        buildTutorialLayer();
+    }
+
+    void AfterflowOverlay::buildTutorialLayer() {
+        if (m_tutorialLayer) {
+            m_tutorialLayer->removeFromParentAndCleanup(true);
+            m_tutorialLayer = nullptr;
+        }
+        auto steps = tutorialSteps();
+        if (!m_deck || m_tutorialStep < 0 || m_tutorialStep >= static_cast<int>(steps.size())) {
+            return;
+        }
+        auto const& step = steps[m_tutorialStep];
+        bool const isFirst = m_tutorialStep == 0;
+        bool const isLast = m_tutorialStep == static_cast<int>(steps.size()) - 1;
+
+        m_tutorialLayer = CCNode::create();
+        m_tutorialLayer->setContentSize(CCSize(DECK_WIDTH, DECK_HEIGHT));
+        m_deck->addChild(m_tutorialLayer, 30);
+
+        auto* shade = makeDrawNode();
+        CCPoint corners[4] = {
+            CCPoint(0.f, 0.f), CCPoint(DECK_WIDTH, 0.f), CCPoint(DECK_WIDTH, DECK_HEIGHT), CCPoint(0.f, DECK_HEIGHT),
+        };
+        shade->drawPolygon(corners, 4, color4(0, 0, 0, 150), 0.f, color4(0, 0, 0, 0));
+        m_tutorialLayer->addChild(shade, 0);
+
+        auto card = tutorialCardRect();
+        auto* cardNode = makeDrawNode();
+        drawCurvedRect(cardNode, card, 12.f, color4(18, 18, 24, 250), color4(accentColor(), 150), 1.5f);
+        m_tutorialLayer->addChild(cardNode, 1);
+
+        if (auto* title = makeLabel(step.title, true, 0.8f, color3(242, 243, 248))) {
+            title->setAnchorPoint(CCPoint(0.f, 0.5f));
+            title->setPosition(CCPoint(card.getMinX() + 28.f, card.getMaxY() - 36.f));
+            fitLabelToWidth(title, TUTORIAL_CARD_W - 120.f);
+            m_tutorialLayer->addChild(title, 3);
+        }
+        if (auto* counter = makeLabel(fmt::format("{}/{}", m_tutorialStep + 1, steps.size()), false, 0.58f, faintTextColor())) {
+            counter->setAnchorPoint(CCPoint(1.f, 0.5f));
+            counter->setPosition(CCPoint(card.getMaxX() - 26.f, card.getMaxY() - 36.f));
+            m_tutorialLayer->addChild(counter, 3);
+        }
+        float lineY = card.getMaxY() - 74.f;
+        for (auto const& line : step.lines) {
+            if (auto* label = makeLabel(line, false, 0.62f, softTextColor())) {
+                label->setAnchorPoint(CCPoint(0.f, 0.5f));
+                label->setPosition(CCPoint(card.getMinX() + 28.f, lineY));
+                fitLabelToWidth(label, TUTORIAL_CARD_W - 56.f);
+                m_tutorialLayer->addChild(label, 3);
+            }
+            lineY -= 22.f;
+        }
+
+        if (!isLast) {
+            makeDeckButton(m_tutorialLayer, tutorialSkipRect(), "skip", false, false, 0.62f);
+        }
+        makeDeckButton(m_tutorialLayer, tutorialNextRect(), isLast ? "done" : (isFirst ? "go" : "next"), true, false, 0.62f);
+    }
+
     void AfterflowOverlay::beginTickEdit(int row) {
         if (row < 0 || row > 1 || !m_tickInputs[row] || !customStageFor(state.stageIndex)) {
             return;
@@ -4268,9 +4570,14 @@ finally {
         if (ticks == value) {
             return;
         }
+        bool const crossedSafe = ticks <= CUSTOM_TICKS_SAFE && value > CUSTOM_TICKS_SAFE;
         ticks = value;
         saveCustomStages();
         setStageIndex(state.stageIndex);
+        if (crossedSafe) {
+            endTickEdit();
+            showHighTicksPopup();
+        }
     }
 
     void AfterflowOverlay::setSliderFromX(float x) {
@@ -4291,6 +4598,9 @@ finally {
     }
 
     AfterflowOverlay::HitTarget AfterflowOverlay::hitTest(CCPoint const& point, int* stageSlot) const {
+        if (logoRect().containsPoint(point)) {
+            return HitTarget::Logo;
+        }
         for (int tabIndex = 0; tabIndex < TAB_COUNT; ++tabIndex) {
             if (tabSlotRect(tabIndex).containsPoint(point)) {
                 if (stageSlot) { *stageSlot = tabIndex; }
@@ -4475,6 +4785,12 @@ finally {
                 }
                 break;
             }
+            case HitTarget::Logo:
+                startTutorial();
+                break;
+            case HitTarget::TutorialSkip:
+            case HitTarget::TutorialNext:
+                break;
             case HitTarget::TickField: {
                 beginTickEdit(m_pressedStageSlot);
                 break;
@@ -4488,10 +4804,14 @@ finally {
                     int which = m_pressedStageSlot % 4;
                     if (row >= 0 && row < 2 && which >= 0 && which < 4) {
                         int& ticks = row == 0 ? custom->ticksAll : custom->ticksWave;
+                        int const before = ticks;
                         ticks = clampCustomTicks(ticks + deltas[which]);
                         saveCustomStages();
                         setStageIndex(state.stageIndex);
                         refresh();
+                        if (before <= CUSTOM_TICKS_SAFE && ticks > CUSTOM_TICKS_SAFE) {
+                            showHighTicksPopup();
+                        }
                     }
                 }
                 break;
