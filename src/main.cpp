@@ -6,7 +6,6 @@
 #include <Geode/loader/SettingV3.hpp>
 #include <Geode/utils/Keyboard.hpp>
 #include <Geode/ui/GeodeUI.hpp>
-#include <Geode/ui/Notification.hpp>
 #include <Geode/ui/Popup.hpp>
 #include <Geode/modify/MenuLayer.hpp>
 #include <Geode/modify/PauseLayer.hpp>
@@ -241,13 +240,6 @@ namespace {
         bool wasAutoReleased = false;
         int spamGapTicks = 16;
         bool waveMarginEnabled = true;
-        bool feedbackEnabled = true;
-        bool cantSaveFeedbackEnabled = true;
-        bool looseGroundSaves = true;
-        int feedbackUnits = 0; // 0 = ticks, 1 = frames @ current fps, 2 = both
-        double minBudgetMilliseconds = 3.0;
-        bool modeCube = true, modeShip = true, modeWave = true, modeBall = true;
-        bool modeUfo = true, modeSpider = true, modeRobot = true, modeSwing = true;
         bool waveVersion46Mode = false;
         bool orbAlignEnabled = true;
         bool orbAlignToGround = false;
@@ -344,9 +336,6 @@ namespace {
     bool isQuickScore = false;
     bool isCrashFixed = false;
     bool isMarginUsed = false;
-    int lastFixTick = -1;
-    int lastFixDelay = 0;
-    int lastFixLanding = 0;
 
     void cycleStage(int direction);
     void toggleTerminal();
@@ -400,13 +389,10 @@ namespace {
         Windows,
         Linux,
         Mac,
-        Android,
     };
 
     HostOS hostOS() {
-#if defined(GEODE_IS_ANDROID)
-        return HostOS::Android;
-#elif defined(GEODE_IS_MACOS)
+#ifdef GEODE_IS_MACOS
         return HostOS::Mac;
 #else
         static HostOS const hostOperatingSystem = geode::utils::platform::isWine() ? HostOS::Linux : HostOS::Windows;
@@ -418,7 +404,6 @@ namespace {
         switch (hostOS()) {
             case HostOS::Linux: return "linux";
             case HostOS::Mac: return "macos";
-            case HostOS::Android: return "android";
             default: return "windows";
         }
     }
@@ -426,7 +411,6 @@ namespace {
     char const* hostOSDescription() {
         switch (hostOS()) {
             case HostOS::Linux: return "proton/wine";
-            case HostOS::Android: return "native (touch)";
             case HostOS::Mac: return "native";
             default: return "native";
         }
@@ -515,9 +499,6 @@ namespace {
     }
 
     void writeTerminalFlags() {
-#ifdef GEODE_IS_ANDROID
-        return;
-#endif
         if (hostOS() != HostOS::Linux) {
             return;
         }
@@ -615,13 +596,15 @@ chmod 700 "$RUNDIR" 2>/dev/null || true
 LOG="$RUNDIR/terminal.log"
 CLOSE="$RUNDIR/close"
 PIDFILE="$RUNDIR/kitty.pid"
+CYCLE="$RUNDIR/cycle-stage"
+CYCLE_HELPER="$RUNDIR/cycle-helper.sh"
+KITTY_CONF="$RUNDIR/kitty.conf"
 CLASS="afterflow"
 
 if [ "${1:-}" = "--inside" ]; then
     clear
     rm -f "$CLOSE"
     printf '\n\033[1;38;5;141mAfterflow\033[0m  predictive input buffer\n\n'
-    CYCLE="$RUNDIR/cycle-stage"
     stty -echo -icanon min 1 time 0 2>/dev/null || true
     tail -n 12 -F "$LOG" &
     TAIL_PID=$!
@@ -643,10 +626,10 @@ if [ "${1:-}" = "--inside" ]; then
         fi
         if [ "$ch" = $'\e' ]; then
             seq="$ch"
-            while IFS= read -rsn1 -t 0.05 c; do
+            while IFS= read -rsn1 -t 0.15 c; do
                 seq+="$c"
                 case "$seq" in
-                    $'\e[17~'|$'\e[17;'*'~'|$'\e[17;'*'u')
+                    $'\e[17~'|$'\e[17u'|$'\e[17;'*'~'|$'\e[17;'*'u')
                         printf 'cycle\n' > "$CYCLE"
                         break
                         ;;
@@ -661,6 +644,15 @@ if [ "${1:-}" = "--inside" ]; then
 fi
 
 cd "$HOME" 2>/dev/null || cd /tmp
+
+printf '#!/bin/sh\nprintf "cycle\\n" > "%s"\n' "$CYCLE" > "$CYCLE_HELPER" 2>/dev/null || true
+chmod 700 "$CYCLE_HELPER" 2>/dev/null || true
+: > "$KITTY_CONF" 2>/dev/null || true
+KITTY_USER_CONF="${KITTY_CONFIG_DIRECTORY:-$HOME/.config/kitty}/kitty.conf"
+if [ -f "$KITTY_USER_CONF" ]; then
+    printf 'include %s\n' "$KITTY_USER_CONF" >> "$KITTY_CONF" 2>/dev/null || true
+fi
+printf 'map f6 launch --type=background /bin/sh %s\n' "$CYCLE_HELPER" >> "$KITTY_CONF" 2>/dev/null || true
 
 raise_window() {
     command -v hyprctl >/dev/null 2>&1 || return 0
@@ -724,7 +716,7 @@ if [ -z "$KITTY" ]; then
     echo "kitty not found on path" >"$RUNDIR/kitty.log"
     exit 1
 fi
-nohup "$KITTY" --title "Afterflow" --class "$CLASS" --instance-group afterflow \
+nohup "$KITTY" --config "$KITTY_CONF" --title "Afterflow" --class "$CLASS" --instance-group afterflow \
     -o confirm_os_window_close=0 -o close_on_child_death=yes \
     -o initial_window_width=100c -o initial_window_height=30c -o remember_window_size=no \
     /bin/bash "$0" --inside >"$RUNDIR/kitty.log" 2>&1 &
@@ -792,7 +784,7 @@ while true; do
         while IFS= read -rsn1 -t 1 c; do
             seq+="$c"
             case "$seq" in
-                $'\e[17~'|$'\e[17;'*'~'|$'\e[17;'*'u')
+                $'\e[17~'|$'\e[17u'|$'\e[17;'*'~'|$'\e[17;'*'u')
                     printf 'cycle\n' > "$CYCLE"
                     break
                     ;;
@@ -836,6 +828,13 @@ $trigger = Join-Path $PSScriptRoot 'afterflow-cycle-stage'
 $pidFile = Join-Path $PSScriptRoot 'afterflow-terminal.pid'
 $closeFile = Join-Path $PSScriptRoot 'afterflow-terminal.close'
 $errorFile = Join-Path $PSScriptRoot 'afterflow-terminal.error'
+$script:lastCycleAt = [DateTime]::MinValue
+$script:closing = $false
+$script:triggerPaths = @($trigger)
+if ($env:TEMP) {
+    $script:triggerPaths += (Join-Path $env:TEMP 'afterflow-cycle-stage')
+}
+$script:triggerPaths = @($script:triggerPaths | Select-Object -Unique)
 
 Remove-Item -LiteralPath $closeFile -Force -ErrorAction SilentlyContinue
 Remove-Item -LiteralPath $errorFile -Force -ErrorAction SilentlyContinue
@@ -872,6 +871,7 @@ try {
     $text.WordWrap = $false
     $text.DetectUrls = $false
     $text.ScrollBars = [System.Windows.Forms.RichTextBoxScrollBars]::Vertical
+    $text.TabStop = $true
     $form.Controls.Add($text)
 
     $text.Text = "Afterflow  predictive input buffer`r`n`r`n"
@@ -879,19 +879,44 @@ try {
     $script:lastLength = 0
     $script:share = [System.IO.FileShare]::ReadWrite -bor [System.IO.FileShare]::Delete
 
-    $form.Add_KeyDown({
+    $keyHandler = {
         param($sender, $eventArgs)
         if ($eventArgs.KeyCode -eq [System.Windows.Forms.Keys]::F6) {
-            Set-Content -LiteralPath $trigger -Value 'cycle' -NoNewline -Encoding ASCII
             $eventArgs.SuppressKeyPress = $true
             $eventArgs.Handled = $true
+            $now = [DateTime]::UtcNow
+            if (($now - $script:lastCycleAt).TotalMilliseconds -ge 120) {
+                $script:lastCycleAt = $now
+                foreach ($path in $script:triggerPaths) {
+                    try {
+                        [System.IO.File]::WriteAllText($path, 'cycle', [System.Text.Encoding]::ASCII)
+                    }
+                    catch {
+                    }
+                }
+            }
         }
         elseif ($eventArgs.KeyCode -eq [System.Windows.Forms.Keys]::F9) {
             $eventArgs.SuppressKeyPress = $true
             $eventArgs.Handled = $true
-            $form.Close()
+            if (-not $script:closing) {
+                $script:closing = $true
+                $form.Close()
+            }
         }
-    })
+    }
+
+    $previewKeyHandler = {
+        param($sender, $eventArgs)
+        if ($eventArgs.KeyCode -eq [System.Windows.Forms.Keys]::F6 -or $eventArgs.KeyCode -eq [System.Windows.Forms.Keys]::F9) {
+            $eventArgs.IsInputKey = $true
+        }
+    }
+
+    $form.Add_KeyDown($keyHandler)
+    $form.Add_PreviewKeyDown($previewKeyHandler)
+    $text.Add_KeyDown($keyHandler)
+    $text.Add_PreviewKeyDown($previewKeyHandler)
 
     $timer = New-Object System.Windows.Forms.Timer
     $timer.Interval = 100
@@ -952,8 +977,9 @@ try {
     $timer.Start()
 
     $form.Add_Shown({
-        $form.Activate()
+        [void]$form.Activate()
         $form.BringToFront()
+        [void]$text.Focus()
     })
 
     [System.Windows.Forms.Application]::Run($form)
@@ -1000,9 +1026,6 @@ finally {
     }
 
     void writeTerminalScript() {
-#ifdef GEODE_IS_ANDROID
-        return;
-#endif
         if (hostOS() == HostOS::Linux) {
             writeWineTerminalScript();
         }
@@ -1024,9 +1047,6 @@ finally {
 #endif
 
     void removeLegacyTerminalLogs() {
-#ifdef GEODE_IS_ANDROID
-        return;
-#endif
         if (hostOS() == HostOS::Mac) {
             return;
         }
@@ -1058,9 +1078,6 @@ finally {
 #endif
 
     void resetTerminalLog() {
-#ifdef GEODE_IS_ANDROID
-        return;
-#endif
         writeTerminalFlags();
         if (hostOS() == HostOS::Linux) {
             ensureWineRuntimeDir();
@@ -1113,10 +1130,6 @@ finally {
     }
 
     void appendTerminalLog(std::string const& message) {
-#ifdef GEODE_IS_ANDROID
-        log::info("[afterflow] {}", message);
-        return;
-#endif
         if (hostOS() == HostOS::Linux || hostOS() == HostOS::Mac) {
             std::ofstream outputFile(terminalLogPath(), std::ios::app);
             if (outputFile) {
@@ -1142,9 +1155,10 @@ finally {
     }
 
     std::string keybindList(std::string_view settingName) {
-#ifdef GEODE_IS_ANDROID
-        return "n/a";
-#endif
+#ifdef GEODE_IS_MOBILE
+        (void)settingName;
+        return "pause menu button";
+#else
         auto keybinds = Mod::get()->getSettingValue<std::vector<Keybind>>(settingName);
         if (keybinds.empty()) {
             return "unbound";
@@ -1157,6 +1171,7 @@ finally {
             outputText += keybind.toString();
         }
         return outputText;
+#endif
     }
 
     std::string stageKey() {
@@ -1168,17 +1183,11 @@ finally {
     }
 
     void finishKeybindIntro() {
-#ifdef GEODE_IS_ANDROID
-        return;
-#endif
         Mod::get()->setSavedValue(KEYBIND_INTRO_DONE, true);
         (void)Mod::get()->saveData();
     }
 
     bool showKeybindIntro() {
-#ifdef GEODE_IS_ANDROID
-        return false;
-#endif
         if (Mod::get()->getSavedValue<bool>(KEYBIND_INTRO_DONE, false)) {
             return false;
         }
@@ -1205,6 +1214,27 @@ finally {
             return false;
         }
 
+#ifdef GEODE_IS_MOBILE
+        auto contentText = std::string(
+            "Afterflow has a button in the pause menu.\n\n"
+            "Pause a level and tap the Afterflow button (next to settings) to change the stage."
+        );
+        createQuickPopup(
+            "Afterflow",
+            contentText,
+            "Got it",
+            "Open settings",
+            [](FLAlertLayer*, bool openSettingsOnStart) {
+                finishKeybindIntro();
+                if (openSettingsOnStart) {
+                    Loader::get()->queueInMainThread([] {
+                        openSettingsPopup(Mod::get());
+                    });
+                }
+            }
+        );
+        return true;
+#else
         auto contentText = fmt::format(
             "Afterflow uses Geode keybinds, so both controls can be changed.\n\n"
             "{}  cycle stage\n{}  terminal\n\n"
@@ -1227,14 +1257,15 @@ finally {
             }
         );
         return true;
+#endif
     }
 
     void setupKeybinds() {
-#ifdef GEODE_IS_ANDROID
+#ifdef GEODE_IS_MOBILE
         return;
-#endif
+#else
         listenForKeybindSettingPresses(KEYBIND_STAGE, [](Keybind const&, bool isDown, bool isRepeat, double) {
-            if (isDown && !isRepeat && GameManager::get()->m_playLayer) {
+            if (isDown && !isRepeat) {
                 cycleStage(1);
             }
             return true;
@@ -1245,6 +1276,7 @@ finally {
             }
             return true;
         });
+#endif
     }
 
     constexpr char const* VERSION_URL =
@@ -1461,8 +1493,8 @@ finally {
                 return;
             }
             log::warn("terminal process exited: {}", errorLine);
-            geode::queueInMainThread([] {
-                Notification::create("Afterflow terminal failed to open", NotificationIcon::Error)->show();
+            geode::queueInMainThread([errorLine] {
+                say("terminal failed to open: {}", errorLine);
             });
         }).detach();
     }
@@ -1607,9 +1639,6 @@ finally {
 #endif
 
     void closeTerminal() {
-#ifdef GEODE_IS_ANDROID
-        return;
-#endif
         if (hostOS() == HostOS::Linux) {
             ensureWineRuntimeDir();
             auto closePath = wineRuntimeDir() / "close";
@@ -1660,9 +1689,6 @@ finally {
     }
 
     void toggleTerminal() {
-#ifdef GEODE_IS_ANDROID
-        return;
-#endif
         if (!isTerminalEnabled()) {
             log::info("terminal toggle ignored (disabled)");
             return;
@@ -1731,7 +1757,7 @@ finally {
         }
 
         if (!launchWindowsTerminal() && !launchWindowsTerminalWithWScript()) {
-            Notification::create("Afterflow terminal failed to open", NotificationIcon::Error)->show();
+            say("terminal failed to open");
         }
 #else
         log::warn("terminal is not available on this platform");
@@ -1750,6 +1776,8 @@ finally {
 
     void readSettings() {
         state.smartEnabled = true;
+        state.budgetMilliseconds = 8.0;
+        state.automaticBudget = false;
         state.practiceModeOnly = false;
         state.groundHorizonTicks = 130;
         state.waveHorizonTicks = 65;
@@ -1777,7 +1805,7 @@ finally {
         state.moreTimeEnabled = false;
         state.dashAutoReleaseEnabled = false;
         state.performanceLogEnabled = false;
-        state.shipBufferEnabled = true; // overwritten below from the mode-ship setting
+        state.shipBufferEnabled = true;
         state.lateCrashTicks = 90;
         state.robustSaveMode = false;
         state.ignoreTouchingObjects = true;
@@ -1791,75 +1819,23 @@ finally {
         state.robotAutoReleaseEnabled = false;
         state.autoNormalRunsEnabled = false;
         state.waveVersion46Mode = false;
-        state.waveMarginEnabled = Mod::get()->getSettingValue<bool>("wave-margin");
-        state.feedbackEnabled = Mod::get()->getSettingValue<bool>("show-feedback");
-        state.cantSaveFeedbackEnabled = Mod::get()->getSettingValue<bool>("show-cant-save");
-        state.looseGroundSaves = Mod::get()->getSettingValue<bool>("loose-ground-saves");
-        {
-            auto units = Mod::get()->getSettingValue<std::string>("feedback-units");
-            state.feedbackUnits = units == "frames" ? 1 : units == "both" ? 2 : 0;
-        }
-        state.automaticBudget = Mod::get()->getSettingValue<bool>("auto-budget");
-        state.minBudgetMilliseconds = std::clamp(Mod::get()->getSettingValue<double>("min-search-ms"), 0.5, 10.0);
-        state.modeCube = Mod::get()->getSettingValue<bool>("mode-cube");
-        state.modeShip = Mod::get()->getSettingValue<bool>("mode-ship");
-        state.modeWave = Mod::get()->getSettingValue<bool>("mode-wave");
-        state.modeBall = Mod::get()->getSettingValue<bool>("mode-ball");
-        state.modeUfo = Mod::get()->getSettingValue<bool>("mode-ufo");
-        state.modeSpider = Mod::get()->getSettingValue<bool>("mode-spider");
-        state.modeRobot = Mod::get()->getSettingValue<bool>("mode-robot");
-        state.modeSwing = Mod::get()->getSettingValue<bool>("mode-swing");
+        state.waveMarginEnabled = true;
         state.orbWindowTicks = 6;
         state.performanceMode = false;
-        state.userBudgetMilliseconds = std::clamp(Mod::get()->getSettingValue<double>("max-search-ms"), state.minBudgetMilliseconds, 30.0);
-        state.budgetMilliseconds = state.userBudgetMilliseconds;
-        state.shipBufferEnabled = state.modeShip;
+        state.userBudgetMilliseconds = 8.0;
         state.wasAutoReleased = false;
         state.consoleEnabled = false;
         state.showPathEnabled = false;
     }
 
-    // real frame time in ms. uses the fps cap when the game reports a sane one, but also looks at the last
-    // measured frame so "unlimited" fps (cap reports 0 or something tiny) and 1000+ fps both work.
-    double frameIntervalMs() {
-        auto* cocosDirector = CCDirector::get();
-        if (!cocosDirector) {
-            return 1000.0 / 60.0;
-        }
-        double capMs = cocosDirector->getAnimationInterval() * 1000.0;
-        double measuredMs = cocosDirector->getDeltaTime() * 1000.0;
-        bool capOk = capMs > 0.05 && capMs < 100.0;
-        bool measuredOk = measuredMs > 0.05 && measuredMs < 250.0;
-        if (capOk && measuredOk) {
-            return std::min(capMs, measuredMs);
-        }
-        if (capOk) {
-            return capMs;
-        }
-        if (measuredOk) {
-            return std::min(measuredMs, 100.0);
-        }
-        return 1000.0 / 60.0;
-    }
-
-    double currentFps() {
-        return 1000.0 / frameIntervalMs();
-    }
-
-    // the search runs inside the click handler, so at high fps a fixed 8ms budget stalls many frames.
-    // scale the budget to the frame time but keep a floor (min-search-ms) so the search can still finish,
-    // and back off further when the game is already lagging.
     void clickBudget() {
-        double maxMs = std::max(state.userBudgetMilliseconds, state.minBudgetMilliseconds);
-        double budgetMilliseconds = maxMs;
+        double budgetMilliseconds = state.userBudgetMilliseconds;
         if (state.automaticBudget) {
-            double intervalMs = frameIntervalMs();
-            budgetMilliseconds = std::clamp(intervalMs, state.minBudgetMilliseconds, maxMs);
-
             auto* cocosDirector = CCDirector::get();
+            double frameInterval = cocosDirector->getAnimationInterval() * 1000.0;
             double frameDuration = cocosDirector->getDeltaTime() * 1000.0;
-            if (frameDuration > std::max(intervalMs * 2.0, 20.0)) {
-                budgetMilliseconds = std::min(budgetMilliseconds, std::max(state.minBudgetMilliseconds, 4.0));
+            if (frameInterval > 0.0 && frameDuration > std::max(frameInterval * 2.0, 20.0)) {
+                budgetMilliseconds = std::min(budgetMilliseconds, 4.0);
             }
         }
         state.budgetMilliseconds = budgetMilliseconds;
@@ -1883,11 +1859,8 @@ finally {
         if (!state.isEnabled) {
             return "stage off (100% raw input)";
         }
-        double fps = currentFps();
-        double framesPerTick = fps / 240.0;
-        return fmt::format("stage {}: {} ticks all | {} ticks wave ({:g}f all | {:g}f wave @ 60fps) | {:.1f}f all | {:.1f}f wave @ {:.0f}fps",
-            state.stageIndex + 1, state.ticksAllModes, state.ticksWaveMode, state.ticksAllModes / 4.f, state.ticksWaveMode / 4.f,
-            state.ticksAllModes * framesPerTick, state.ticksWaveMode * framesPerTick, fps);
+        return fmt::format("stage {}: {} ticks all | {} ticks wave ({:g}f all | {:g}f wave @ 60fps)",
+            state.stageIndex + 1, state.ticksAllModes, state.ticksWaveMode, state.ticksAllModes / 4.f, state.ticksWaveMode / 4.f);
     }
 
     void dropGhosts() {
@@ -1936,29 +1909,6 @@ finally {
             auto* childNode = static_cast<CCNode*>(childArray->lastObject());
             state.ghostRenderLayer->removeChild(childNode, true);
         }
-    }
-
-    void showFeedback(PlayLayer* gameLayer, std::string const& text, bool isGood) {
-        if (!gameLayer) {
-            return;
-        }
-        constexpr char const* FEEDBACK_ID = "afterflow-feedback";
-        auto* label = typeinfo_cast<CCLabelBMFont*>(gameLayer->getChildByID(FEEDBACK_ID));
-        if (!label) {
-            label = CCLabelBMFont::create(text.c_str(), "bigFont.fnt");
-            label->setID(FEEDBACK_ID);
-            label->setScale(0.35f);
-            auto winSize = CCDirector::get()->getWinSize();
-            label->setPosition({ winSize.width / 2.f, winSize.height - 22.f });
-            gameLayer->addChild(label, 1000);
-        }
-        else {
-            label->setString(text.c_str());
-            label->stopAllActions();
-        }
-        label->setColor(isGood ? ccColor3B{ 120, 255, 140 } : ccColor3B{ 255, 110, 110 });
-        label->setOpacity(255);
-        label->runAction(CCSequence::create(CCDelayTime::create(0.5f), CCFadeOut::create(0.25f), nullptr));
     }
 
     void sendButton(PlayLayer* gameLayer, bool isDown) {
@@ -2930,22 +2880,6 @@ finally {
         return 0;
     }
 
-    // true when the player is in a gamemode the user switched off in settings
-    bool modeDisabled(PlayerObject* player1, PlayerObject* player2) {
-        auto isOff = [](PlayerObject* playerObject) {
-            if (!playerObject) return false;
-            if (playerObject->m_isShip) return !state.modeShip;
-            if (playerObject->m_isDart) return !state.modeWave;
-            if (playerObject->m_isBird) return !state.modeUfo;
-            if (playerObject->m_isBall) return !state.modeBall;
-            if (playerObject->m_isSwing) return !state.modeSwing;
-            if (playerObject->m_isSpider) return !state.modeSpider;
-            if (playerObject->m_isRobot) return !state.modeRobot;
-            return !state.modeCube;
-        };
-        return isOff(player1) || isOff(player2);
-    }
-
     void queueInput(int tickCount, bool isDown) {
         state.queuedInputs.push_back({ tickCount, isDown });
     }
@@ -2998,7 +2932,7 @@ finally {
         int earlyTicks = midTickFraction > 0.f ? 1 : 0;
 
         bool hasShip = player1 && (player1->m_isShip || (player2 && player2->m_isShip));
-        if (!player1 || player1->m_isDead || (hasShip && !state.shipBufferEnabled) || modeDisabled(player1, player2)) {
+        if (!player1 || player1->m_isDead || (hasShip && !state.shipBufferEnabled)) {
             resetPending();
             state.hasAppliedInput = isDown;
             return false;
@@ -3082,7 +3016,7 @@ finally {
         if (hasWave) {
             horizonTicks = fullWaveHorizon(isMini);
         }
-        int maxDelayTicks = st(hasWave ? state.ticksWaveMode : (hasShip ? std::max(std::min(state.ticksAllModes, 8), std::clamp(state.shipMaxDelayTicks, 0, 16)) : state.ticksAllModes));
+        int maxDelayTicks = st(hasWave ? state.ticksWaveMode : (hasShip ? std::clamp(state.shipMaxDelayTicks, 0, 16) : state.ticksAllModes));
         if (maxDelayTicks <= 0) {
             state.hasAppliedInput = isDown;
             return false;
@@ -3157,25 +3091,9 @@ finally {
                               : searchDelay(playLayer, player1, player2, isDual, isDown, hasWave, horizonTicks, maxDelayTicks, releaseAfterTicks, baseDelay, &landingTick,
                                     isGroundPress);
 
-        if (savedTick <= 0 && isGroundPress && state.looseGroundSaves && clickMs() < state.budgetMilliseconds) {
-            // strict search wants the cube to land safely. if nothing does, accept any delay that gets clearly past
-            // the obstacle that would kill the raw click: raw is known to die, so this can only help.
-            int looseBestDelay = debugBestDelay;
-            int looseBestResult = debugBestResult;
-            savedTick = searchDelay(playLayer, player1, player2, isDual, isDown, false, horizonTicks, maxDelayTicks, releaseAfterTicks, baseDelay,
-                &landingTick, false);
-            if (savedTick <= 0) {
-                debugBestDelay = std::max(debugBestDelay, looseBestDelay);
-                debugBestResult = std::max(debugBestResult, looseBestResult);
-            }
-        }
-
         if (savedTick <= 0) {
             say("no save: {}{} dies in {}t (max {}t, best +{}t -> {}t of {})", isDown ? "press" : "release", tickTagText, baseDelay, maxDelayTicks,
                 debugBestDelay, debugBestResult, horizonTicks);
-            if (state.feedbackEnabled && state.cantSaveFeedbackEnabled) {
-                showFeedback(playLayer, "can't save", false);
-            }
             state.hasAppliedInput = isDown;
             return false;
         }
@@ -3203,16 +3121,6 @@ finally {
             isCubeStyleWave && isMarginUsed ? std::string("  +margin")
             : isRobotPress ? fmt::format("  hold {}t", robotUsedHoldTicks) : std::string());
         state.inputShiftTicks = savedTick;
-        lastFixTick = currentTick;
-        lastFixDelay = savedTick;
-        lastFixLanding = landingTick;
-        if (state.feedbackEnabled) {
-            double framesSaved = savedTick * currentFps() / 240.0;
-            showFeedback(playLayer,
-                state.feedbackUnits == 1 ? fmt::format("fixed +{:.1f}f", framesSaved)
-                : state.feedbackUnits == 2 ? fmt::format("fixed +{}t ({:.1f}f)", savedTick, framesSaved)
-                : fmt::format("fixed +{}t", savedTick), true);
-        }
         queueInput(savedTick - earlyTicks, isDown);
         return true;
     }
@@ -3230,9 +3138,6 @@ finally {
     }
 
     void startCycleWatcher() {
-#ifdef GEODE_IS_ANDROID
-        return; // no keyboard / host terminal on android, stage comes from the pause menu panel
-#endif
         std::error_code errorCode;
         std::filesystem::remove(cycleTriggerPath(), errorCode);
         try {
@@ -3246,9 +3151,7 @@ finally {
                     }
                     std::filesystem::remove(triggerPath, errorCode);
                     geode::queueInMainThread([] {
-                        if (GameManager::get()->m_playLayer) {
-                            cycleStage();
-                        }
+                        cycleStage();
                     });
                 }
             }).detach();
@@ -3299,234 +3202,104 @@ finally {
         }
     }
 
-    // one place that names a stage, so every ui and log line agrees (e.g. "4: 16t / 8t")
-    std::string stageLabel(int stageNumber) {
-        auto const& stageDefinition = STAGE_TABLE[stageNumber];
-        if (!stageDefinition.isEnabled) {
-            return fmt::format("{}: off", stageNumber + 1);
-        }
-        return fmt::format("{}: {}t / {}t", stageNumber + 1, stageDefinition.ticksAllModes, stageDefinition.ticksWaveMode);
-    }
-
-    // sets, saves and applies a stage. used by the android panel
-    void setStageIndex(int stageNumber) {
-        state.stageIndex = ((stageNumber % STAGE_TABLE_SIZE) + STAGE_TABLE_SIZE) % STAGE_TABLE_SIZE;
-        Mod::get()->setSavedValue("stage", state.stageIndex);
-        resetPending();
-        applyStage();
-    }
-
-#ifdef GEODE_IS_ANDROID
-    // android has no function keys or terminal, so this panel (opened from a button in the pause menu)
-    // is the android replacement for the cycle key. it edits the same mod settings the settings page uses
-    class AfterflowPanel : public FLAlertLayer {
+    class AfterflowPopup : public geode::Popup {
     protected:
-        struct ToggleEntry {
-            char const* settingKey;
-            char const* title;
-        };
-
-        static constexpr ToggleEntry MODE_ENTRIES[8] = {
-            { "mode-cube", "cube" },
-            { "mode-ship", "ship" },
-            { "mode-wave", "wave" },
-            { "mode-ball", "ball" },
-            { "mode-ufo", "ufo" },
-            { "mode-spider", "spider" },
-            { "mode-robot", "robot" },
-            { "mode-swing", "swing" },
-        };
-        static constexpr ToggleEntry OPTION_ENTRIES[4] = {
-            { "loose-ground-saves", "loose ground saves" },
-            { "wave-margin", "wave safety margin" },
-            { "show-feedback", "show fixed text" },
-            { "show-cant-save", "show can't save text" },
-        };
-
-        CCLabelBMFont* m_stageName = nullptr;
-        CCLabelBMFont* m_stageInfo = nullptr;
-
-        static void fitLabel(CCLabelBMFont* label, float maxWidth, float baseScale) {
-            label->setScale(baseScale);
-            float width = label->getContentSize().width * baseScale;
-            if (width > maxWidth) {
-                label->setScale(baseScale * maxWidth / width);
-            }
-        }
-
-        void refreshStage() {
-            m_stageName->setString(stageLabel(state.stageIndex).c_str());
-            fitLabel(m_stageName, 190.f, 0.7f);
-            if (!state.isEnabled) {
-                m_stageInfo->setString("100% raw input");
-            }
-            else {
-                double framesPerTick = currentFps() / 240.0;
-                m_stageInfo->setString(fmt::format("{:.1f}f all | {:.1f}f wave @ {:.0f}fps",
-                    state.ticksAllModes * framesPerTick, state.ticksWaveMode * framesPerTick, currentFps()).c_str());
-            }
-            fitLabel(m_stageInfo, 230.f, 0.45f);
-        }
-
-        void addToggle(CCNode* content, ToggleEntry const& entry, float x, float y, int tag) {
-            auto offSprite = CCSprite::createWithSpriteFrameName("GJ_checkOff_001.png");
-            auto onSprite = CCSprite::createWithSpriteFrameName("GJ_checkOn_001.png");
-            offSprite->setScale(0.7f);
-            onSprite->setScale(0.7f);
-            auto toggler = CCMenuItemToggler::create(offSprite, onSprite, this, menu_selector(AfterflowPanel::onToggle));
-            toggler->setTag(tag);
-            toggler->setPosition({ x, y });
-            toggler->toggle(Mod::get()->getSettingValue<bool>(entry.settingKey));
-            m_buttonMenu->addChild(toggler);
-
-            auto label = CCLabelBMFont::create(entry.title, "bigFont.fnt");
-            label->setAnchorPoint({ 0.f, 0.5f });
-            label->setPosition({ x + 17.f, y });
-            fitLabel(label, 128.f, 0.4f);
-            content->addChild(label);
-        }
+        CCLabelBMFont* m_stageLabel = nullptr;
+        CCLabelBMFont* m_detailLabel = nullptr;
 
         bool init() {
-            if (!FLAlertLayer::init(150)) {
+            if (!Popup::init(260.f, 170.f)) {
                 return false;
             }
-            m_noElasticity = true;
+            this->setTitle("Afterflow");
 
-            auto winSize = CCDirector::get()->getWinSize();
-            constexpr float PANEL_WIDTH = 380.f;
-            constexpr float PANEL_HEIGHT = 270.f;
-            constexpr float COLUMN_LEFT = -168.f;
-            constexpr float COLUMN_RIGHT = 14.f;
+            m_stageLabel = CCLabelBMFont::create("", "goldFont.fnt");
+            m_stageLabel->setScale(0.8f);
+            m_mainLayer->addChildAtPosition(m_stageLabel, Anchor::Center, ccp(0.f, 22.f));
 
-            m_mainLayer = CCLayer::create();
-            this->addChild(m_mainLayer);
+            m_detailLabel = CCLabelBMFont::create("", "chatFont.fnt");
+            m_detailLabel->setScale(0.9f);
+            m_detailLabel->setOpacity(190);
+            m_mainLayer->addChildAtPosition(m_detailLabel, Anchor::Center, ccp(0.f, -2.f));
 
-            auto content = CCNode::create();
-            content->setPosition({ winSize.width / 2, winSize.height / 2 });
-            m_mainLayer->addChild(content);
+            auto* previousSprite = CCSprite::createWithSpriteFrameName("GJ_arrow_03_001.png");
+            auto* previousButton = CCMenuItemExt::createSpriteExtra(previousSprite, [this](CCMenuItemSpriteExtra*) {
+                cycleStage(-1);
+                this->refresh();
+            });
+            m_buttonMenu->addChildAtPosition(previousButton, Anchor::Center, ccp(-100.f, 22.f));
 
-            auto background = CCScale9Sprite::create("GJ_square01.png");
-            background->setContentSize({ PANEL_WIDTH, PANEL_HEIGHT });
-            content->addChild(background, -1);
+            auto* nextSprite = CCSprite::createWithSpriteFrameName("GJ_arrow_03_001.png");
+            nextSprite->setFlipX(true);
+            auto* nextButton = CCMenuItemExt::createSpriteExtra(nextSprite, [this](CCMenuItemSpriteExtra*) {
+                cycleStage(1);
+                this->refresh();
+            });
+            m_buttonMenu->addChildAtPosition(nextButton, Anchor::Center, ccp(100.f, 22.f));
 
-            m_buttonMenu = CCMenu::create();
-            m_buttonMenu->setPosition({ winSize.width / 2, winSize.height / 2 });
-            m_mainLayer->addChild(m_buttonMenu, 10);
+            auto* settingsSprite = ButtonSprite::create("Settings", "goldFont.fnt", "GJ_button_01.png", 0.8f);
+            auto* settingsButton = CCMenuItemExt::createSpriteExtra(settingsSprite, [](CCMenuItemSpriteExtra*) {
+                openSettingsPopup(Mod::get());
+            });
+            m_buttonMenu->addChildAtPosition(settingsButton, Anchor::Center, ccp(0.f, -50.f));
 
-            auto title = CCLabelBMFont::create("Afterflow", "goldFont.fnt");
-            title->setScale(0.8f);
-            title->setPosition({ 0.f, 116.f });
-            content->addChild(title);
-
-            // stage picker
-            auto leftSprite = CCSprite::createWithSpriteFrameName("GJ_arrow_01_001.png");
-            leftSprite->setScale(0.8f);
-            auto leftButton = CCMenuItemSpriteExtra::create(leftSprite, this, menu_selector(AfterflowPanel::onPreviousStage));
-            leftButton->setPosition({ -120.f, 84.f });
-            m_buttonMenu->addChild(leftButton);
-
-            auto rightSprite = CCSprite::createWithSpriteFrameName("GJ_arrow_01_001.png");
-            rightSprite->setFlipX(true);
-            rightSprite->setScale(0.8f);
-            auto rightButton = CCMenuItemSpriteExtra::create(rightSprite, this, menu_selector(AfterflowPanel::onNextStage));
-            rightButton->setPosition({ 120.f, 84.f });
-            m_buttonMenu->addChild(rightButton);
-
-            m_stageName = CCLabelBMFont::create("", "bigFont.fnt");
-            m_stageName->setPosition({ 0.f, 90.f });
-            content->addChild(m_stageName);
-            m_stageInfo = CCLabelBMFont::create("", "chatFont.fnt");
-            m_stageInfo->setPosition({ 0.f, 68.f });
-            content->addChild(m_stageInfo);
-            refreshStage();
-
-            // gamemodes
-            auto modesTitle = CCLabelBMFont::create("gamemodes", "goldFont.fnt");
-            modesTitle->setScale(0.5f);
-            modesTitle->setPosition({ 0.f, 48.f });
-            content->addChild(modesTitle);
-            for (int entryIndex = 0; entryIndex < 8; ++entryIndex) {
-                float columnX = entryIndex % 2 == 0 ? COLUMN_LEFT : COLUMN_RIGHT;
-                float rowY = 26.f - static_cast<float>(entryIndex / 2) * 22.f;
-                addToggle(content, MODE_ENTRIES[entryIndex], columnX, rowY, entryIndex);
-            }
-
-            // options
-            auto optionsTitle = CCLabelBMFont::create("options", "goldFont.fnt");
-            optionsTitle->setScale(0.5f);
-            optionsTitle->setPosition({ 0.f, -64.f });
-            content->addChild(optionsTitle);
-            for (int entryIndex = 0; entryIndex < 4; ++entryIndex) {
-                float columnX = entryIndex % 2 == 0 ? COLUMN_LEFT : COLUMN_RIGHT;
-                float rowY = -84.f - static_cast<float>(entryIndex / 2) * 22.f;
-                addToggle(content, OPTION_ENTRIES[entryIndex], columnX, rowY, 100 + entryIndex);
-            }
-
-            auto doneButton = CCMenuItemSpriteExtra::create(ButtonSprite::create("Done", 80, true, "goldFont.fnt", "GJ_button_01.png", 30.f, 0.7f), this, menu_selector(AfterflowPanel::onClose));
-            doneButton->setPosition({ 0.f, -PANEL_HEIGHT / 2 + 2.f });
-            m_buttonMenu->addChild(doneButton);
-
-            this->setTouchEnabled(true);
-            this->setKeypadEnabled(true);
+            this->refresh();
             return true;
         }
 
-        void onPreviousStage(CCObject*) {
-            setStageIndex(state.stageIndex - 1);
-            say("pause menu -> {}", stageBanner());
-            refreshStage();
-        }
-
-        void onNextStage(CCObject*) {
-            setStageIndex(state.stageIndex + 1);
-            say("pause menu -> {}", stageBanner());
-            refreshStage();
-        }
-
-        void onToggle(CCObject* sender) {
-            auto* toggler = static_cast<CCMenuItemToggler*>(sender);
-            int tag = toggler->getTag();
-            ToggleEntry const& entry = tag >= 100 ? OPTION_ENTRIES[tag - 100] : MODE_ENTRIES[tag];
-            // the callback runs before the toggler flips, so the new value is the opposite of what it shows now
-            bool newValue = !toggler->isToggled();
-            Mod::get()->setSettingValue<bool>(entry.settingKey, newValue);
-            say("pause menu -> {} {}", entry.title, newValue ? "on" : "off");
-        }
-
-        void onClose(CCObject*) {
-            this->setKeypadEnabled(false);
-            this->setTouchEnabled(false);
-            this->removeFromParentAndCleanup(true);
-        }
-
-        void keyBackClicked() override {
-            this->onClose(nullptr);
+        void refresh() {
+            if (!state.isEnabled) {
+                m_stageLabel->setString("Stage off");
+                m_detailLabel->setString("100% raw input");
+                return;
+            }
+            m_stageLabel->setString(fmt::format("Stage {} / {}", state.stageIndex + 1, STAGE_TABLE_SIZE - 1).c_str());
+            m_detailLabel->setString(fmt::format("{}t all  |  {}t wave", state.ticksAllModes, state.ticksWaveMode).c_str());
         }
 
     public:
-        static AfterflowPanel* create() {
-            auto* panel = new AfterflowPanel();
-            if (panel && panel->init()) {
-                panel->autorelease();
-                return panel;
+        static AfterflowPopup* create() {
+            auto* popup = new AfterflowPopup();
+            if (popup->init()) {
+                popup->autorelease();
+                return popup;
             }
-            CC_SAFE_DELETE(panel);
+            delete popup;
             return nullptr;
         }
     };
-#endif
+
+    CCMenuItemSpriteExtra* findSettingsButton(CCNode* root) {
+        if (auto* byId = typeinfo_cast<CCMenuItemSpriteExtra*>(root->getChildByIDRecursive("options-button"))) {
+            return byId;
+        }
+        auto* gearFrame = CCSpriteFrameCache::get()->spriteFrameByName("GJ_optionsBtn02_001.png");
+        if (!gearFrame) {
+            return nullptr;
+        }
+        std::function<CCMenuItemSpriteExtra*(CCNode*)> search = [&](CCNode* node) -> CCMenuItemSpriteExtra* {
+            for (auto* child : CCArrayExt<CCNode*>(node->getChildren())) {
+                if (auto* item = typeinfo_cast<CCMenuItemSpriteExtra*>(child)) {
+                    if (auto* sprite = typeinfo_cast<CCSprite*>(item->getNormalImage())) {
+                        if (sprite->isFrameDisplayed(gearFrame)) {
+                            return item;
+                        }
+                    }
+                }
+                if (auto* found = search(child)) {
+                    return found;
+                }
+            }
+            return nullptr;
+        };
+        return search(root);
+    }
 }
 
 $on_mod(Loaded) {
 
     constexpr int STAGE_SCHEMA_VERSION = 2;
-#ifdef GEODE_IS_ANDROID
-    constexpr int DEFAULT_STAGE_INDEX = 3; // stage 4, same default the old android setting had
-#else
-    constexpr int DEFAULT_STAGE_INDEX = 0;
-#endif
-    int rawSavedStage = Mod::get()->getSavedValue<int>("stage", -1);
-    int savedStageIndex = rawSavedStage < 0 ? DEFAULT_STAGE_INDEX : std::clamp(rawSavedStage, 0, STAGE_TABLE_SIZE - 1);
+    int savedStageIndex = std::clamp(Mod::get()->getSavedValue<int>("stage", 0), 0, STAGE_TABLE_SIZE - 1);
     if (Mod::get()->getSavedValue<int>("stage-schema", 1) < STAGE_SCHEMA_VERSION) {
         if (savedStageIndex == 6) {
             savedStageIndex = STAGE_TABLE_SIZE - 1;
@@ -3537,11 +3310,11 @@ $on_mod(Loaded) {
     state.stageIndex = savedStageIndex;
     readSettings();
     applyStage();
+#ifndef GEODE_IS_MOBILE
     removeLegacyTerminalLogs();
     resetTerminalLog();
     startCycleWatcher();
     setupKeybinds();
-#ifndef GEODE_IS_ANDROID
     listenForSettingChanges<bool>("terminal-enabled", [](bool enabled) {
         writeTerminalFlags();
         if (!enabled) {
@@ -3550,10 +3323,10 @@ $on_mod(Loaded) {
     });
 #endif
     say("starting mode: {}", stageBanner());
-#ifdef GEODE_IS_ANDROID
-    say("stage is picked from the afterflow button in the pause menu: 2/2 -> 4/4 -> 8/8 -> 16/8 -> 24/12 -> 32/16 -> 40/20 -> off");
+#ifdef GEODE_IS_MOBILE
+    log::info("afterflow mobile: use the afterflow button in the pause menu to change stages");
 #else
-    say("{} in-level cycles: 2/2 -> 4/4 -> 8/8 -> 16/8 -> 24/12 -> 32/16 -> 40/20 -> off", stageKey());
+    say("{} cycles anywhere: 2/2 -> 4/4 -> 8/8 -> 16/8 -> 24/12 -> 32/16 -> 40/20 -> off", stageKey());
     say("{} toggles the terminal", terminalKey());
 #endif
     say("host os: {} ({})", hostOSName(), hostOSDescription());
@@ -3581,16 +3354,6 @@ class $modify(BufPlayLayer, PlayLayer) {
         if (!playerObject || wasAlreadyDead || !playerObject->m_isDead) {
             return;
         }
-        if (lastFixTick >= 0 && playerObject == m_player1) {
-            int ticksSinceFix = currentTick - lastFixTick;
-            if (ticksSinceFix <= st(60)) {
-                say("fix failed: predicted +{}t (safe until {}t) but died {}t after the click - prediction mismatch", lastFixDelay, lastFixLanding, ticksSinceFix);
-                if (state.feedbackEnabled && state.cantSaveFeedbackEnabled) {
-                    showFeedback(this, "fix failed", false);
-                }
-            }
-        }
-        lastFixTick = -1;
         resetPending();
         state.hasAppliedInput = false;
         state.rapidInputTicks = 0;
@@ -3607,11 +3370,7 @@ class $modify(BufPlayLayer, PlayLayer) {
         state.ghostPlayer1 = makeGhost(this);
         state.ghostPlayer2 = makeGhost(this);
         state.ghostLayerBaseIndex = state.ghostRenderLayer->getChildrenCount();
-#ifdef GEODE_IS_ANDROID
-        say("buffer ready | {} | pause menu button", stageText());
-#else
         say("buffer ready | {} | {} cycles", stageText(), stageKey());
-#endif
         checkForUpdates(false);
         state.hasRealInput = false;
         state.hasAppliedInput = false;
@@ -3631,7 +3390,6 @@ class $modify(BufPlayLayer, PlayLayer) {
     }
 
     void resetLevel() {
-        lastFixTick = -1;
         resetPending();
         forgetPress();
         state.hasAppliedInput = false;
@@ -3650,8 +3408,6 @@ class $modify(BufPlayLayer, PlayLayer) {
     }
 
     void resume() {
-        readSettings();
-        applyStage();
         resetPending();
         state.rapidInputTicks = 0;
         state.ticksSinceInput = 999;
@@ -3669,37 +3425,49 @@ class $modify(BufPlayLayer, PlayLayer) {
     }
 };
 
-#ifdef GEODE_IS_ANDROID
-// android only: adds an afterflow button to the level pause menu that opens the stage / gamemode panel
 class $modify(BufPauseLayer, PauseLayer) {
     void customSetup() {
         PauseLayer::customSetup();
 
-        auto label = CCLabelBMFont::create("AF", "bigFont.fnt");
-        label->setScale(0.8f);
-        auto buttonSprite = CircleButtonSprite::create(label, CircleBaseColor::Pink, CircleBaseSize::Medium);
-        auto button = CCMenuItemSpriteExtra::create(buttonSprite, this, menu_selector(BufPauseLayer::onAfterflow));
-        button->setID("afterflow-button"_spr);
+        auto* settingsButton = findSettingsButton(this);
+        if (!settingsButton || !settingsButton->getParent()) {
+            log::warn("afterflow: could not find the settings button in the pause menu");
+            return;
+        }
 
-        if (auto rightMenu = this->getChildByID("right-button-menu")) {
-            rightMenu->addChild(button);
-            rightMenu->updateLayout();
+        auto* label = CCLabelBMFont::create("AF", "bigFont.fnt");
+        label->setScale(0.7f);
+        auto* buttonSprite = CircleButtonSprite::create(label, CircleBaseColor::Green, CircleBaseSize::Medium);
+        auto* afterflowButton = CCMenuItemSpriteExtra::create(buttonSprite, this, menu_selector(BufPauseLayer::onAfterflow));
+        afterflowButton->setID("afterflow-button"_spr);
+
+        // match the settings button's on-screen size
+        float settingsWidth = settingsButton->getContentSize().width * settingsButton->getScaleX();
+        float ownWidth = afterflowButton->getContentSize().width;
+        if (ownWidth > 0.f && settingsWidth > 0.f) {
+            afterflowButton->setScale(settingsWidth / ownWidth);
+        }
+
+        auto* parentMenu = settingsButton->getParent();
+        parentMenu->addChild(afterflowButton);
+        if (parentMenu->getLayout()) {
+            parentMenu->updateLayout();
         }
         else {
-            auto winSize = CCDirector::get()->getWinSize();
-            auto fallbackMenu = CCMenu::create();
-            fallbackMenu->setPosition({ winSize.width - 34.f, 34.f });
-            fallbackMenu->addChild(button);
-            button->setPosition({ 0.f, 0.f });
-            this->addChild(fallbackMenu, 10);
+            float gap = 6.f;
+            afterflowButton->setPosition(
+                settingsButton->getPositionX() - settingsWidth - gap,
+                settingsButton->getPositionY()
+            );
         }
     }
 
     void onAfterflow(CCObject*) {
-        AfterflowPanel::create()->show();
+        if (auto* popup = AfterflowPopup::create()) {
+            popup->show();
+        }
     }
 };
-#endif
 
 class $modify(BufMenuLayer, MenuLayer) {
     bool init() {
