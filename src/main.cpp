@@ -145,33 +145,18 @@ namespace {
     };
     constexpr int STAGE_TABLE_SIZE = sizeof(STAGE_TABLE) / sizeof(STAGE_TABLE[0]);
 
-    constexpr int STAGE_VISIBLE_COUNT = 8;
+    constexpr int STAGE_MAX_STAGES = 24;
+    constexpr int CUSTOM_STAGE_LIMIT = 4;
     constexpr int CUSTOM_TICKS_MIN = 1;
     constexpr int CUSTOM_TICKS_MAX = 240;
     constexpr int CUSTOM_TICKS_SAFE = 120;
 
-    constexpr size_t CUSTOM_NAME_MAX = 10;
-
     struct CustomStage {
         int ticksAll;
         int ticksWave;
-        std::string name;
     };
 
-    std::string cleanCustomName(std::string raw) {
-        std::string out;
-        for (char c : raw) {
-            if (c == ';' || c == ':' || c == '\n' || c == '\r') { continue; }
-            out += c;
-        }
-        while (!out.empty() && out.front() == ' ') { out.erase(out.begin()); }
-        while (!out.empty() && out.back() == ' ') { out.pop_back(); }
-        if (out.size() > CUSTOM_NAME_MAX) { out.resize(CUSTOM_NAME_MAX); }
-        return out;
-    }
-
     std::vector<CustomStage> g_customStages;
-    int g_stageScrollOffset = 0;
     bool g_customStagesLoaded = false;
 
     int clampCustomTicks(int value) {
@@ -203,21 +188,15 @@ namespace {
                 end = raw.size();
             }
             std::string piece = raw.substr(start, end - start);
-            if (!piece.empty()) {
+            if (!piece.empty() && static_cast<int>(g_customStages.size()) < CUSTOM_STAGE_LIMIT) {
                 int ticksAll = 0;
                 int ticksWave = 0;
                 if (std::sscanf(piece.c_str(), "%d:%d", &ticksAll, &ticksWave) == 2) {
-                    std::string name;
-                    size_t first = piece.find(':');
-                    size_t second = first == std::string::npos ? first : piece.find(':', first + 1);
-                    if (second != std::string::npos) {
-                        name = cleanCustomName(piece.substr(second + 1));
-                    }
-                    g_customStages.push_back({ clampCustomTicks(ticksAll), clampCustomTicks(ticksWave), name });
+                    g_customStages.push_back({ clampCustomTicks(ticksAll), clampCustomTicks(ticksWave) });
                 }
                 else {
                     // old name-only placeholder from v2.4.0/2.4.1
-                    g_customStages.push_back({ 8, 8, "" });
+                    g_customStages.push_back({ 8, 8 });
                 }
             }
             start = end + 1;
@@ -228,7 +207,7 @@ namespace {
         std::string raw;
         for (size_t index = 0; index < g_customStages.size(); ++index) {
             if (index > 0) { raw += ';'; }
-            raw += fmt::format("{}:{}:{}", g_customStages[index].ticksAll, g_customStages[index].ticksWave, cleanCustomName(g_customStages[index].name));
+            raw += fmt::format("{}:{}", g_customStages[index].ticksAll, g_customStages[index].ticksWave);
         }
         Mod::get()->setSavedValue<std::string>("custom-stages", raw);
         (void)Mod::get()->saveData();
@@ -2382,8 +2361,10 @@ finally {
     constexpr float STAGE_TRACK_PADDING = 4.f;
     constexpr float STAGE_TRACK_GAP = 3.f;
     float stageSlotWidth() {
+        int count = stageTotalCount();
+        if (count < 1) { count = 1; }
         return (STAGE_TRACK_WIDTH - STAGE_TRACK_PADDING * 2.f
-            - STAGE_TRACK_GAP * static_cast<float>(STAGE_VISIBLE_COUNT - 1)) / static_cast<float>(STAGE_VISIBLE_COUNT);
+            - STAGE_TRACK_GAP * static_cast<float>(count - 1)) / static_cast<float>(count);
     }
     constexpr float STAGE_CELL_HEIGHT = 28.f;
     constexpr float STAGE_LABEL_Y = STAGE_TRACK_Y + STAGE_TRACK_HEIGHT * 0.5f;
@@ -2700,7 +2681,7 @@ finally {
 
     CCRect stageSlotRect(int index) {
         return CCRect(
-            STAGE_TRACK_X + STAGE_TRACK_PADDING + static_cast<float>(index - g_stageScrollOffset) * (stageSlotWidth() + STAGE_TRACK_GAP),
+            STAGE_TRACK_X + STAGE_TRACK_PADDING + static_cast<float>(index) * (stageSlotWidth() + STAGE_TRACK_GAP),
             STAGE_TRACK_Y,
             stageSlotWidth(),
             STAGE_TRACK_HEIGHT
@@ -2791,23 +2772,17 @@ finally {
         if (index >= 0 && index < STAGE_TABLE_SIZE) {
             return stageName(index);
         }
-        static std::vector<std::string> customNames;
+        static char const* customNames[CUSTOM_STAGE_LIMIT] = { "c1", "c2", "c3", "c4" };
         loadCustomStages();
         int custom = index - STAGE_TABLE_SIZE;
-        if (custom >= 0 && custom < static_cast<int>(g_customStages.size())) {
-            if (custom >= static_cast<int>(customNames.size())) { customNames.resize(custom + 1); }
-            auto const& given = g_customStages[custom].name;
-            customNames[custom] = given.empty() ? fmt::format("c{}", custom + 1) : given;
-            return customNames[custom].c_str();
+        if (custom >= 0 && custom < static_cast<int>(g_customStages.size()) && custom < CUSTOM_STAGE_LIMIT) {
+            return customNames[custom];
         }
         return "?";
     }
 
     std::string stageTitleAt(int index) {
         if (index >= STAGE_TABLE_SIZE) {
-            if (auto* custom = customStageFor(index); custom && !custom->name.empty()) {
-                return custom->name;
-            }
             return fmt::format("custom {}", index - STAGE_TABLE_SIZE + 1);
         }
         return stageLabelAt(index);
@@ -3109,45 +3084,6 @@ finally {
         return best;
     }
 
-    class RenameStagePopup : public Popup {
-    public:
-        static RenameStagePopup* create(std::string current, std::function<void(std::string)> onDone) {
-            auto* ret = new RenameStagePopup();
-            if (ret->init(std::move(current), std::move(onDone))) {
-                ret->autorelease();
-                return ret;
-            }
-            delete ret;
-            return nullptr;
-        }
-
-    protected:
-        TextInput* m_input = nullptr;
-        std::function<void(std::string)> m_onDone;
-
-        bool init(std::string current, std::function<void(std::string)> onDone) {
-            if (!Popup::init(260.f, 140.f)) {
-                return false;
-            }
-            m_onDone = std::move(onDone);
-            setTitle("Rename stage");
-            m_input = TextInput::create(200.f, "name");
-            m_input->setMaxCharCount(CUSTOM_NAME_MAX);
-            m_input->setString(current);
-            m_mainLayer->addChildAtPosition(m_input, Anchor::Center, CCPoint(0.f, 5.f));
-            auto* okButton = CCMenuItemSpriteExtra::create(
-                ButtonSprite::create("Ok"), this, menu_selector(RenameStagePopup::onOk)
-            );
-            m_buttonMenu->addChildAtPosition(okButton, Anchor::Bottom, CCPoint(0.f, 25.f));
-            return true;
-        }
-
-        void onOk(CCObject*) {
-            if (m_onDone) { m_onDone(m_input->getString()); }
-            onClose(nullptr);
-        }
-    };
-
     class AfterflowOverlay : public CCLayer {
     public:
         static AfterflowOverlay* create();
@@ -3166,18 +3102,8 @@ finally {
         void ccTouchEnded(CCTouch* touch, CCEvent* event) override;
         void ccTouchCancelled(CCTouch* touch, CCEvent* event) override;
         void registerWithTouchDispatcher() override;
-#if defined(GEODE_IS_DESKTOP)
-        void rightKeyDown() override;
-        void scrollWheel(float y, float x) override;
-#endif
 
     private:
-        void promptRename(int stageIndex);
-        void onHoldRename(float);
-        void stepStage(int direction);
-        float m_swipeX = 0.f;
-        bool m_holdFired = false;
-
         enum class HitTarget {
             None,
             Outside,
@@ -3264,7 +3190,7 @@ finally {
         CCLabelBMFont* m_activityLabel = nullptr;
         CCLabelBMFont* m_activityCountLabel = nullptr;
         CCLabelBMFont* m_activityLines[LOG_LINE_COUNT] = {};
-        std::vector<CCLabelBMFont*> m_stageNameLabels;
+        CCLabelBMFont* m_stageNameLabels[STAGE_MAX_STAGES] = {};
         CCLabelBMFont* m_stageHintKeyLabel = nullptr;
         CCLabelBMFont* m_stageHintLabel = nullptr;
         CCLabelBMFont* m_panelHintKeyLabel = nullptr;
@@ -3413,9 +3339,6 @@ finally {
         setTouchMode(kCCTouchesOneByOne);
         setTouchPriority(-1000);
         setTouchEnabled(isMobileHost());
-#if defined(GEODE_IS_DESKTOP)
-        setMouseEnabled(true);
-#endif
 
         m_scrim = CCLayerColor::create(ccc4(0, 0, 0, 255), winSize.width, winSize.height);
         m_scrim->setOpacity(0);
@@ -3436,7 +3359,7 @@ finally {
 
         auto* launcherHalo = makeDrawNode();
         launcherHalo->drawCircle(CCPoint(34.f, 34.f), 33.f, color4(accentColor(), 13), 0.f, color4(0, 0, 0, 0), 48);
-        m_launcher->addChild(launcherHalo, 2); // circle on top, icon underneath
+        m_launcher->addChild(launcherHalo);
         if (auto* launcherLogo = makeLogoMark(56.f)) {
             launcherLogo->setPosition(CCPoint(34.f, 34.f));
             m_launcher->addChild(launcherLogo, 1);
@@ -3501,7 +3424,7 @@ finally {
         m_tipHasText = false;
         m_modeIcons.clear();
         for (int index = 0; index < LOG_LINE_COUNT; ++index) { m_activityLines[index] = nullptr; }
-        m_stageNameLabels.clear();
+        for (int index = 0; index < STAGE_MAX_STAGES; ++index) { m_stageNameLabels[index] = nullptr; }
         for (int index = 0; index < 8; ++index) { m_tickBtnLabels[index] = nullptr; }
         for (int index = 0; index < 2; ++index) { m_tickValueLabels[index] = nullptr; }
         for (int index = 0; index < 2; ++index) { m_tickInputs[index] = nullptr; }
@@ -3679,7 +3602,7 @@ finally {
             }
             nameLabel->setPosition(CCPoint(cell.getMidX(), STAGE_LABEL_Y));
             m_deck->addChild(nameLabel, 3);
-            m_stageNameLabels.push_back(nameLabel);
+            m_stageNameLabels[index] = nameLabel;
         }
 
         if (auto* allLabel = makeLabel("all modes", false, 0.66f, softTextColor())) {
@@ -3837,7 +3760,7 @@ finally {
             m_deck->addChild(button, 6);
             return button;
         };
-        m_tutorialButton = makeTag(tutorialBtnRect(), "tutorial", accentColor());
+        m_tutorialButton = makeTag(tutorialBtnRect(), "tutorial", color3(170, 120, 255));
         m_creditsButton = makeTag(creditsRect(), "credits", color3(255, 214, 72));
 
         applyTab();
@@ -3998,11 +3921,6 @@ finally {
         Mod::get()->setSettingValue<ccColor3B>("ui-surface-color", hexColor(theme.surface));
         Mod::get()->setSettingValue<ccColor3B>("ui-text-color", hexColor(theme.text));
         rebuildDeck();
-        if (m_deck && m_isOpen) {
-            m_deck->stopAllActions();
-            m_deck->setScale(m_deckScale * 0.96f);
-            m_deck->runAction(CCEaseBackOut::create(CCScaleTo::create(0.24f, m_deckScale)));
-        }
     }
 
     void AfterflowOverlay::applyChip() {
@@ -4074,8 +3992,8 @@ finally {
         if (m_stageNameLabel) { m_stageNameLabel->setVisible(showStage); }
         if (m_stageIndexLabel) { m_stageIndexLabel->setVisible(showStage); }
         if (m_stageDescriptionLabel) { m_stageDescriptionLabel->setVisible(showStage); }
-        for (auto* label : m_stageNameLabels) {
-            if (label) { label->setVisible(showStage); }
+        for (int i = 0; i < static_cast<int>(sizeof(m_stageNameLabels) / sizeof(m_stageNameLabels[0])); ++i) {
+            if (m_stageNameLabels[i]) { m_stageNameLabels[i]->setVisible(showStage); }
         }
         for (int i = 0; i < static_cast<int>(sizeof(m_stageTimingLabels) / sizeof(m_stageTimingLabels[0])); ++i) {
             if (m_stageTimingLabels[i]) { m_stageTimingLabels[i]->setVisible(showStage); }
@@ -4163,8 +4081,6 @@ finally {
         }
 
         if (m_stageTrack) {
-            int maxOffset = std::max(0, stageTotalCount() - STAGE_VISIBLE_COUNT);
-            g_stageScrollOffset = std::clamp(g_stageScrollOffset, 0, maxOffset);
             m_stageTrack->clear();
             drawCurvedRect(
                 m_stageTrack,
@@ -4191,9 +4107,6 @@ finally {
                 if (!nameLabel) {
                     continue;
                 }
-                auto cell = stageCellRect(index);
-                nameLabel->setPosition(CCPoint(cell.getMidX(), STAGE_LABEL_Y));
-                nameLabel->setVisible(index >= g_stageScrollOffset && index < g_stageScrollOffset + STAGE_VISIBLE_COUNT);
                 bool isSelected = index == state.stageIndex;
                 bool isAvailable = stageEnabledAt(index);
                 nameLabel->setColor(isSelected ? color3(248, 249, 253) : (isAvailable ? softTextColor() : warningColor()));
@@ -4353,7 +4266,7 @@ finally {
             }
 
             // + custom / remove
-            bool canAddCustom = true;
+            bool canAddCustom = stageTotalCount() - STAGE_TABLE_SIZE < CUSTOM_STAGE_LIMIT;
             drawCurvedRect(
                 m_stageTrack,
                 customAddRect(),
@@ -4509,14 +4422,8 @@ finally {
             // and a neutral mid-state when the player is not inside a level.
             float targetScale = (activeMode < 0) ? baseScale : (isActive ? baseScale : baseScale * 0.8f);
             int targetOpacity = (activeMode < 0) ? 150 : (isActive ? 255 : 100);
-            if (std::abs(icon->getScale() - targetScale) > 0.015f || icon->getOpacity() != targetOpacity) {
-                icon->stopAllActions();
-                icon->runAction(CCSpawn::create(
-                    CCEaseBackOut::create(CCScaleTo::create(0.18f, targetScale)),
-                    CCFadeTo::create(0.18f, targetOpacity),
-                    nullptr
-                ));
-            }
+            icon->setScale(targetScale);
+            icon->setOpacity(targetOpacity);
         }
 
         updateHints();
@@ -4545,8 +4452,6 @@ finally {
             "Copy the log when you report a bug",
             "The last stage is off, your clicks stay untouched",
         };
-        tips.push_back(mobile ? "Hold a custom stage to rename it" : "Right-click a custom stage to rename it");
-        tips.push_back(mobile ? "Swipe the stage row to browse stages, then tap one" : "Scroll the stage row to browse stages, then click one");
         if (!mobile) {
             tips.push_back(fmt::format("Press {} to open or close this panel", panelKey()));
             tips.push_back(fmt::format("Press {} to cycle stages", stageKey()));
@@ -4844,12 +4749,6 @@ finally {
             if (m_pressedTarget != HitTarget::None) {
                 pressTarget(m_pressedTarget);
             }
-            m_holdFired = false;
-            m_swipeX = deckPoint.x;
-            unschedule(schedule_selector(AfterflowOverlay::onHoldRename));
-            if (m_pressedTarget == HitTarget::StageSlot && customStageFor(m_pressedStageSlot)) {
-                scheduleOnce(schedule_selector(AfterflowOverlay::onHoldRename), 0.55f);
-            }
             return true;
         }
 
@@ -4929,18 +4828,9 @@ finally {
 
         if (m_isOpen && m_pressedTarget != HitTarget::None) {
             CCPoint deckPoint = m_deck->convertToNodeSpace(touch->getLocation());
-            if (m_activeTab == 1 && m_pressedTarget == HitTarget::StageSlot && std::abs(deckPoint.x - m_swipeX) > 28.f) {
-                unschedule(schedule_selector(AfterflowOverlay::onHoldRename));
-                g_stageScrollOffset = std::clamp(g_stageScrollOffset + (deckPoint.x < m_swipeX ? 1 : -1), 0, std::max(0, stageTotalCount() - STAGE_VISIBLE_COUNT));
-                refresh();
-                m_swipeX = deckPoint.x;
-                m_holdFired = true; // swallow the release
-                return;
-            }
             int stageSlot = -1;
             HitTarget target = hitTest(deckPoint, &stageSlot);
             if (target != m_pressedTarget || (target == HitTarget::StageSlot && stageSlot != m_pressedStageSlot)) {
-                unschedule(schedule_selector(AfterflowOverlay::onHoldRename));
                 restorePressed();
                 m_pressedTarget = HitTarget::None;
             }
@@ -5010,13 +4900,6 @@ finally {
             return;
         }
 
-        unschedule(schedule_selector(AfterflowOverlay::onHoldRename));
-        if (m_holdFired) {
-            m_holdFired = false;
-            m_pressedTarget = HitTarget::None;
-            restorePressed();
-            return;
-        }
         HitTarget target = m_pressedTarget;
         m_pressedTarget = HitTarget::None;
         if (target == HitTarget::Outside) {
@@ -5038,68 +4921,7 @@ finally {
         restorePressed();
     }
 
-    void AfterflowOverlay::promptRename(int stageIndex) {
-        auto* custom = customStageFor(stageIndex);
-        if (!custom) {
-            return;
-        }
-        RenameStagePopup::create(custom->name, [this, stageIndex](std::string name) {
-            if (auto* target = customStageFor(stageIndex)) {
-                target->name = cleanCustomName(name);
-                saveCustomStages();
-                rebuildDeck();
-            }
-        })->show();
-    }
-
-    void AfterflowOverlay::onHoldRename(float) {
-        if (!m_isOpen || m_pressedTarget != HitTarget::StageSlot) {
-            return;
-        }
-        int slot = m_pressedStageSlot;
-        m_holdFired = true;
-        restorePressed();
-        m_pressedTarget = HitTarget::None;
-        promptRename(slot);
-    }
-
-    void AfterflowOverlay::stepStage(int direction) {
-        int next = std::clamp(state.stageIndex + direction, 0, stageTotalCount() - 1);
-        if (next != state.stageIndex) {
-            setStageIndex(next);
-        }
-    }
-
-#if defined(GEODE_IS_DESKTOP)
-    void AfterflowOverlay::rightKeyDown() {
-        if (!m_isOpen || m_activeTab != 1 || m_tutorialStep >= 0 || gdPopupOpen()) {
-            return;
-        }
-        CCPoint deckPoint = m_deck->convertToNodeSpace(getMousePos());
-        int slot = -1;
-        if (hitTest(deckPoint, &slot) == HitTarget::StageSlot && customStageFor(slot)) {
-            promptRename(slot);
-        }
-    }
-
-    void AfterflowOverlay::scrollWheel(float y, float) {
-        if (!m_isOpen || m_activeTab != 1 || m_tutorialStep >= 0 || gdPopupOpen()) {
-            return;
-        }
-        CCPoint deckPoint = m_deck->convertToNodeSpace(getMousePos());
-        if (!CCRect(0.f, 0.f, DECK_WIDTH, DECK_HEIGHT).containsPoint(deckPoint)) {
-            return;
-        }
-        if (deckPoint.y >= STAGE_TRACK_Y && deckPoint.y <= STAGE_TRACK_Y + STAGE_TRACK_HEIGHT) {
-            g_stageScrollOffset = std::clamp(g_stageScrollOffset + (y > 0.f ? -1 : 1), 0, std::max(0, stageTotalCount() - STAGE_VISIBLE_COUNT));
-            refresh();
-        }
-    }
-#endif
-
     void AfterflowOverlay::ccTouchCancelled(CCTouch*, CCEvent*) {
-        unschedule(schedule_selector(AfterflowOverlay::onHoldRename));
-        m_holdFired = false;
         if (m_draggingDeck || m_resizingDeck) {
             finishDeckGesture();
             return;
@@ -5861,10 +5683,10 @@ finally {
         switch (target) {
             case HitTarget::StageAdd: {
                 loadCustomStages();
-                {
+                if (static_cast<int>(g_customStages.size()) < CUSTOM_STAGE_LIMIT) {
                     int copyAll = state.isEnabled ? state.ticksAllModes : 8;
                     int copyWave = state.isEnabled ? state.ticksWaveMode : 8;
-                    g_customStages.push_back({ clampCustomTicks(copyAll), clampCustomTicks(copyWave), "" });
+                    g_customStages.push_back({ clampCustomTicks(copyAll), clampCustomTicks(copyWave) });
                     saveCustomStages();
                     rebuildDeck();
                     setStageIndex(STAGE_TABLE_SIZE + static_cast<int>(g_customStages.size()) - 1);
@@ -7539,8 +7361,6 @@ finally {
 
     void setStageIndex(int stageIndex) {
         int nextIndex = (stageIndex % stageTotalCount() + stageTotalCount()) % stageTotalCount();
-        if (nextIndex < g_stageScrollOffset) { g_stageScrollOffset = nextIndex; }
-        if (nextIndex >= g_stageScrollOffset + STAGE_VISIBLE_COUNT) { g_stageScrollOffset = nextIndex - STAGE_VISIBLE_COUNT + 1; }
         bool didChange = nextIndex != state.stageIndex;
         state.stageIndex = nextIndex;
         Mod::get()->setSavedValue("stage", state.stageIndex);
