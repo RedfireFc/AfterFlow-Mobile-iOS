@@ -2537,6 +2537,10 @@ finally {
         }
         label->setScale(scale * getUIFontScale());
         label->setColor(color);
+        // smooth the bitmap font atlas so scaled text is not pixelated
+        if (auto* texture = label->getTexture()) {
+            texture->setAntiAliasTexParameters();
+        }
         return label;
     }
 
@@ -2691,6 +2695,11 @@ finally {
             return "";
         }
         return names[index];
+    }
+
+    // small credits button, pinned to the top right of the settings card
+    CCRect creditsRect() {
+        return CCRect(CONTENT_RIGHT - 20.f - 62.f, LOG_HEADER_Y - 12.f, 62.f, 24.f);
     }
 
     CCRect configButtonRect(int index) {
@@ -2932,8 +2941,7 @@ finally {
             "pick a theme to change the panel colors.",
             "glow turns the soft glow behind the panel on or off.",
             "terminal shows or hides the terminal button (pc only).",
-            "the mode icons show your icons in your colors.",
-            "tap one to change it, and the + adds another.",
+            "credits (top right) shows who helped make this.",
             "export copies your tuning as json, import loads it back.",
         }, TF_TAB2, true, TF_SWATCHES, TF_CONFIG });
         steps.push_back({ "you're all set", -1, {
@@ -2944,7 +2952,7 @@ finally {
     }
 
     float tutorialCardHeight(size_t lineCount) {
-        return 104.f + 19.f * static_cast<float>(lineCount);
+        return 142.f + 22.f * static_cast<float>(lineCount);
     }
 
     // card-local buttons, origin is the card's bottom left corner
@@ -3063,6 +3071,7 @@ finally {
             ImportConfig,
             ExportConfig,
             ReplayTutorial,
+            Credits,
             ModeIcon,
             ModeIconAdd,
             StageAdd,
@@ -3209,6 +3218,7 @@ finally {
         CCNode* m_importButton = nullptr;
         CCNode* m_exportButton = nullptr;
         CCNode* m_tutorialButton = nullptr;
+        CCNode* m_creditsButton = nullptr;
         int m_activeTab = 0;
         CCDrawNode* m_chipBar = nullptr;
         CCLabelBMFont* m_chipLabels[CHIP_COUNT] = {};
@@ -3330,6 +3340,7 @@ finally {
         m_importButton = nullptr;
         m_exportButton = nullptr;
         m_tutorialButton = nullptr;
+        m_creditsButton = nullptr;
         m_modeIcons.clear();
         for (int index = 0; index < LOG_LINE_COUNT; ++index) { m_activityLines[index] = nullptr; }
         for (int index = 0; index < STAGE_MAX_STAGES; ++index) { m_stageNameLabels[index] = nullptr; }
@@ -3625,12 +3636,6 @@ finally {
             }
         }
 
-        m_modeIconContainer = CCNode::create();
-        m_modeIconContainer->setAnchorPoint(CCPoint(0.f, 0.5f));
-        m_modeIconContainer->setPosition(CCPoint(MODE_ICON_X, MODE_ICON_Y));
-        m_modeIconContainer->setContentSize(CCSize(MODE_ICON_STEP * static_cast<float>(modeSlots().size() + 1), MODE_ICON_SIZE));
-        m_deck->addChild(m_modeIconContainer, 3);
-
         m_importButton = makeDeckButton(m_deck, configButtonRect(0), "import", false, false, 0.58f);
         m_exportButton = makeDeckButton(m_deck, configButtonRect(1), "export", false, false, 0.58f);
         m_tutorialButton = makeDeckButton(m_deck, configButtonRect(2), "tutorial", false, false, 0.58f, true);
@@ -3640,7 +3645,25 @@ finally {
         m_configStatusLabel->setPosition(CCPoint(configButtonRect(2).getMaxX() + 14.f, CONFIG_BUTTON_Y));
         m_deck->addChild(m_configStatusLabel, 3);
 
-        updateModeIcons();
+        {
+            // small yellow credits button, always pinned top right of settings
+            auto rect = creditsRect();
+            auto* button = CCNode::create();
+            button->setContentSize(CCSize(rect.size.width, rect.size.height));
+            button->setAnchorPoint(CCPoint(0.5f, 0.5f));
+            button->setPosition(CCPoint(rect.getMidX(), rect.getMidY()));
+            auto* back = makeDrawNode();
+            ccColor3B gold = color3(255, 214, 72);
+            drawCurvedRect(back, CCRect(0.f, 0.f, rect.size.width, rect.size.height), 6.f, color4(gold, 34), color4(gold, 130), 1.f);
+            button->addChild(back);
+            if (auto* label = makeLabel("credits", false, 0.5f, gold)) {
+                label->setPosition(CCPoint(rect.size.width * 0.5f, rect.size.height * 0.5f));
+                fitLabelToWidth(label, rect.size.width - 10.f);
+                button->addChild(label);
+            }
+            m_deck->addChild(button, 4);
+            m_creditsButton = button;
+        }
 
         applyTab();
         buildTutorialLayer();
@@ -3833,6 +3856,7 @@ finally {
         if (m_importButton) { m_importButton->setVisible(showSettings); }
         if (m_exportButton) { m_exportButton->setVisible(showSettings); }
         if (m_tutorialButton) { m_tutorialButton->setVisible(showSettings); }
+        if (m_creditsButton) { m_creditsButton->setVisible(showSettings); }
         if (m_configStatusLabel) { m_configStatusLabel->setVisible(showSettings); }
         for (int i = 0; i < 2; ++i) {
             if (m_settingsValueLabels[i]) { m_settingsValueLabels[i]->setVisible(showSettings); }
@@ -4757,7 +4781,7 @@ finally {
             counter->setPosition(CCPoint(TUTORIAL_CARD_W - 24.f, cardHeight - 22.f));
             m_tutCard->addChild(counter, 3);
         }
-        float lineY = cardHeight - 80.f;
+        float lineY = cardHeight - 76.f;
         float delay = 0.12f;
         for (auto const& line : step.lines) {
             if (auto* label = makeLabel(line, false, 0.6f, softTextColor())) {
@@ -4768,7 +4792,7 @@ finally {
                 m_tutCard->addChild(label, 3);
                 popIn(label, delay, 0.f, 8.f);
             }
-            lineY -= 19.f;
+            lineY -= 22.f;
             delay += 0.06f;
         }
 
@@ -5117,6 +5141,9 @@ finally {
                 return HitTarget::Tab;
             }
         }
+        if (m_activeTab == 2 && creditsRect().containsPoint(point)) {
+            return HitTarget::Credits;
+        }
         if (m_activeTab == 2) {
             for (int index = 0; index < THEME_COUNT; ++index) {
                 if (swatchRect(index).containsPoint(point)) {
@@ -5161,20 +5188,8 @@ finally {
                 }
             }
         }
-        if (m_activeTab == 2) {
-            int slotCount = static_cast<int>(m_modeSlots.size());
-            for (int index = 0; index <= slotCount; ++index) {
-                CCRect tile(
-                    MODE_ICON_X + MODE_ICON_STEP * static_cast<float>(index) + 3.f,
-                    MODE_ICON_Y - (MODE_ICON_SIZE + 8.f) * 0.5f,
-                    MODE_ICON_STEP - 6.f,
-                    MODE_ICON_SIZE + 8.f
-                );
-                if (tile.containsPoint(point)) {
-                    if (stageSlot) { *stageSlot = index; }
-                    return (index == slotCount) ? HitTarget::ModeIconAdd : HitTarget::ModeIcon;
-                }
-            }
+        if (m_activeTab == 2 && creditsRect().containsPoint(point)) {
+            return HitTarget::Credits;
         }
         if (m_activeTab == 1) {
             if (customAddRect().containsPoint(point)) {
@@ -5219,6 +5234,7 @@ finally {
             case HitTarget::ImportConfig: return m_importButton;
             case HitTarget::ExportConfig: return m_exportButton;
             case HitTarget::ReplayTutorial: return m_tutorialButton;
+            case HitTarget::Credits: return m_creditsButton;
             default: return nullptr;
         }
     }
@@ -5268,6 +5284,16 @@ finally {
 
         if (target == HitTarget::ReplayTutorial) {
             startTutorial();
+            return;
+        }
+
+        if (target == HitTarget::Credits) {
+            FLAlertLayer::create(
+                "Credits",
+                "<cy>Sir Abraham Creakstopher the second</c> - baller.w21 made mobile support and a ton of stuff\n"
+                "<cy>Legion</c> - nyxx6_1 gave a ton of ideas",
+                "thank you"
+            )->show();
             return;
         }
 
@@ -5335,27 +5361,6 @@ finally {
                             showHighTicksPopup();
                         }
                     }
-                }
-                break;
-            }
-            case HitTarget::ModeIcon: {
-                auto& slots = modeSlots();
-                int index = m_pressedStageSlot;
-                if (index >= 0 && index < static_cast<int>(slots.size())) {
-                    slots[index] = (slots[index] + 1) % 8;
-                    saveModeSlots();
-                    updateModeIcons();
-                    refresh();
-                }
-                break;
-            }
-            case HitTarget::ModeIconAdd: {
-                auto& slots = modeSlots();
-                if (slots.size() < 16) {
-                    slots.push_back(0);
-                    saveModeSlots();
-                    updateModeIcons();
-                    refresh();
                 }
                 break;
             }
