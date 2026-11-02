@@ -2,13 +2,12 @@ cmake_minimum_required(VERSION 3.29)
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-# Only set Apple architectures when actually targeting Apple platforms.
-if (APPLE)
-    if ("${CMAKE_SYSTEM_NAME}" STREQUAL "iOS" OR IOS)
-        set(CMAKE_OSX_ARCHITECTURES "arm64")
-    else()
-        set(CMAKE_OSX_ARCHITECTURES "arm64;x86_64")
-    endif()
+# Pick Apple architectures before project(). APPLE is not defined that early, so
+# use CMAKE_SYSTEM_NAME (passed by the Geode build for iOS) and CMAKE_HOST_APPLE.
+if ("${CMAKE_SYSTEM_NAME}" STREQUAL "iOS")
+    set(CMAKE_OSX_ARCHITECTURES "arm64")
+elseif (CMAKE_HOST_APPLE AND NOT "${CMAKE_SYSTEM_NAME}" STREQUAL "Android")
+    set(CMAKE_OSX_ARCHITECTURES "arm64;x86_64")
 endif()
 set(CMAKE_CXX_VISIBILITY_PRESET hidden)
 

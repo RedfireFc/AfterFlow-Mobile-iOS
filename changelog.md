@@ -1,12 +1,9 @@
-# v2.4.5
-- theme changes now animate the panel transition.
-- mode icon active state changes animate their scale and opacity.
-- Android build continues to use the Geode version declared in mod.json for SDK compatibility.
-
 # v2.4.4
-- custom stages can now be added without a fixed four-stage cap.
-- stage buttons stay readable; scroll or swipe the stage strip to browse more, then select a stage with a tap or click.
-- custom-stage labels are stored dynamically, and rename remains available by holding a custom stage on mobile or right-clicking it on desktop.
+
+- **ios support**: the build workflow now has a real iOS job (it was listed in the changelog but missing from the matrix), and a failed iOS build is no longer ignored.
+- [fix] `CMakeLists.txt` chose apple architectures before `project()`, where `APPLE` is not defined, so iOS never got `arm64`. it now keys off `CMAKE_SYSTEM_NAME` / `CMAKE_HOST_APPLE`.
+- [fix] the in-game updater no longer calls `game::restart` on ios (apps cannot relaunch themselves); it asks you to reopen the game instead.
+- [fix] `CMakeLists.txt` version synced with `mod.json`.
 
 # v2.4.1
 
@@ -116,4 +113,3 @@ macos support
 # v1.0.0
 
 inital release
-
