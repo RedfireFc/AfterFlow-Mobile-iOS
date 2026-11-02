@@ -2951,6 +2951,8 @@ finally {
             mobile ? std::string("close it any time with the x in the top right.")
                    : fmt::format("close it with the x or {}.", panelKey()),
             "the text up top shows whether the buffer is on.",
+            "drag the top bar to move the panel, the corner to resize.",
+            "double tap the corner grip to reset it.",
             "tap the afterflow logo any time to replay this tour.",
         }, TF_DISMISS, false, TF_HEADER, TF_NONE });
         TutorialStep logStep{ "log tab", -1, {
@@ -3007,8 +3009,12 @@ finally {
         return CCRect(origin.x + TUTORIAL_CARD_W - 22.f - 120.f, origin.y + 16.f, 120.f, 32.f);
     }
 
+    // width of logo + name, updated whenever the deck is built so the tour
+    // spotlight always covers the whole thing
+    float g_logoWidth = 150.f;
+
     CCRect logoRect() {
-        return CCRect(MARGIN, HEADER_Y - 20.f, 150.f, 40.f);
+        return CCRect(MARGIN, HEADER_Y - 22.f, g_logoWidth, 44.f);
     }
 
     CCRect tutorialRectFor(int kind) {
@@ -3115,6 +3121,8 @@ finally {
             ExportConfig,
             ReplayTutorial,
             Credits,
+            DragPanel,
+            Resize,
             ModeIcon,
             ModeIconAdd,
             StageAdd,
@@ -3268,6 +3276,26 @@ finally {
         float m_tipLeft = 0.f;
         float m_tipRight = 0.f;
         void showRandomTip();
+        void drawTipStars();
+        CCPoint clampDeckPosition(CCPoint const& position, float scale) const;
+        CCPoint savedDeckPosition() const;
+        void saveDeckPlacement();
+        void resetDeckPlacement();
+        void finishDeckGesture();
+        CCNode* m_tipHolder = nullptr;
+        CCDrawNode* m_tipStars = nullptr;
+        float m_tipTime = 0.f;
+        float m_tipW = 60.f;
+        bool m_tipHasText = false;
+        bool m_draggingDeck = false;
+        bool m_resizingDeck = false;
+        bool m_deckMoved = false;
+        CCPoint m_dragTouchStart;
+        CCPoint m_dragDeckStart;
+        CCPoint m_resizeTL;
+        float m_baseScale = 1.f;
+        float m_fitScale = 1.f;
+        double m_lastGripTap = -10.0;
         int m_activeTab = 0;
         CCDrawNode* m_chipBar = nullptr;
         CCLabelBMFont* m_chipLabels[CHIP_COUNT] = {};
@@ -3391,6 +3419,9 @@ finally {
         m_tutorialButton = nullptr;
         m_creditsButton = nullptr;
         m_tipLabel = nullptr;
+        m_tipHolder = nullptr;
+        m_tipStars = nullptr;
+        m_tipHasText = false;
         m_modeIcons.clear();
         for (int index = 0; index < LOG_LINE_COUNT; ++index) { m_activityLines[index] = nullptr; }
         for (int index = 0; index < STAGE_MAX_STAGES; ++index) { m_stageNameLabels[index] = nullptr; }
@@ -3452,6 +3483,11 @@ finally {
         m_deck->addChild(m_shell, 1);
         drawCurvedRect(m_shell, CCRect(-12.f, -22.f, DECK_WIDTH + 24.f, DECK_HEIGHT + 22.f), DECK_RADIUS + 6.f, color4(0, 0, 0, 72), none, 0.f);
         drawCurvedRect(m_shell, CCRect(0.f, 0.f, DECK_WIDTH, DECK_HEIGHT), DECK_RADIUS, color4(shellTint, 252), color4(255, 255, 255, 26), 1.f);
+        // resize grip, bottom right corner
+        for (int k = 0; k < 3; ++k) {
+            float o = 8.f + static_cast<float>(k) * 5.f;
+            m_shell->drawSegment(CCPoint(DECK_WIDTH - o, 6.f), CCPoint(DECK_WIDTH - 6.f, o), 1.1f, color4(255, 255, 255, 80));
+        }
         drawCurvedRect(m_shell, CCRect(CONTENT_X, CARD_BOTTOM, CONTENT_WIDTH, CARD_HEIGHT), CARD_RADIUS, color4(surface, 255), color4(255, 255, 255, 18), 1.f);
 
         m_tabBar = makeDrawNode();
@@ -3475,13 +3511,19 @@ finally {
         brandName->setAnchorPoint(CCPoint(0.f, 0.5f));
         brandName->setPosition(CCPoint(MARGIN + 42.f, HEADER_Y));
         m_deck->addChild(brandName, 3);
+        g_logoWidth = std::max(150.f, brandName->getPositionX() + brandName->getContentSize().width * brandName->getScale() + 12.f - MARGIN);
 
         m_tipLeft = brandName->getPositionX() + brandName->getContentSize().width * brandName->getScale() + 18.f;
         m_tipRight = CONTENT_RIGHT - 170.f - 34.f;
-        m_tipLabel = makeLabel("", false, 0.56f, faintTextColor());
+        m_tipHolder = CCNode::create();
+        m_tipHolder->setPosition(CCPoint(m_tipLeft, HEADER_Y));
+        m_deck->addChild(m_tipHolder, 3);
+        m_tipStars = makeDrawNode();
+        m_tipHolder->addChild(m_tipStars, 2);
+        m_tipLabel = makeLabel("", false, 0.56f, color3(255, 214, 72));
         m_tipLabel->setAnchorPoint(CCPoint(0.f, 0.5f));
-        m_tipLabel->setPosition(CCPoint(m_tipLeft, HEADER_Y));
-        m_deck->addChild(m_tipLabel, 3);
+        m_tipLabel->setPosition(CCPoint(0.f, 0.f));
+        m_tipHolder->addChild(m_tipLabel, 1);
 
         m_statusBeacon = makeDrawNode();
         m_deck->addChild(m_statusBeacon, 2);
@@ -3757,9 +3799,12 @@ finally {
 
         float fitScale = std::min(0.86f * safeArea.size.width / DECK_WIDTH, 0.86f * safeArea.size.height / DECK_HEIGHT);
         float comfortableScale = std::min(fitScale, 0.94f);
-        m_deckScale = std::min(std::max(comfortableScale * getUIPanelScale(), 0.2f), fitScale);
+        m_fitScale = std::max(fitScale, 0.2f);
+        m_baseScale = comfortableScale * getUIPanelScale();
+        double userMul = std::clamp(Mod::get()->getSavedValue<double>("panel-user-mul", 1.0), 0.1, 8.0);
+        m_deckScale = std::min(std::max(m_baseScale * static_cast<float>(userMul), 0.2f), fitScale);
         m_deck->setScale(m_deckScale);
-        m_deck->setPosition(CCPoint(safeArea.getMidX(), safeArea.getMidY()));
+        m_deck->setPosition(clampDeckPosition(savedDeckPosition(), m_deckScale));
 
         double savedX = Mod::get()->getSavedValue<double>("ui-button-x", -1.0);
         double savedY = Mod::get()->getSavedValue<double>("ui-button-y", -1.0);
@@ -3774,6 +3819,68 @@ finally {
         }
         m_launcherPosition = clampLauncherPosition(m_launcherPosition);
         m_launcher->setPosition(m_launcherPosition);
+    }
+
+    CCPoint AfterflowOverlay::clampDeckPosition(CCPoint const& position, float scale) const {
+        float halfW = DECK_WIDTH * 0.5f * scale;
+        float halfH = DECK_HEIGHT * 0.5f * scale;
+        float minX = m_safeArea.getMinX() + halfW;
+        float maxX = m_safeArea.getMaxX() - halfW;
+        float minY = m_safeArea.getMinY() + halfH;
+        float maxY = m_safeArea.getMaxY() - halfH;
+        if (maxX < minX) { minX = maxX = m_safeArea.getMidX(); }
+        if (maxY < minY) { minY = maxY = m_safeArea.getMidY(); }
+        return CCPoint(std::clamp(position.x, minX, maxX), std::clamp(position.y, minY, maxY));
+    }
+
+    CCPoint AfterflowOverlay::savedDeckPosition() const {
+        double fx = Mod::get()->getSavedValue<double>("panel-pos-x", 0.5);
+        double fy = Mod::get()->getSavedValue<double>("panel-pos-y", 0.5);
+        fx = std::clamp(fx, 0.0, 1.0);
+        fy = std::clamp(fy, 0.0, 1.0);
+        return CCPoint(
+            m_safeArea.getMinX() + static_cast<float>(fx) * m_safeArea.size.width,
+            m_safeArea.getMinY() + static_cast<float>(fy) * m_safeArea.size.height
+        );
+    }
+
+    void AfterflowOverlay::saveDeckPlacement() {
+        auto pos = m_deck->getPosition();
+        float width = std::max(1.f, m_safeArea.size.width);
+        float height = std::max(1.f, m_safeArea.size.height);
+        Mod::get()->setSavedValue<double>("panel-pos-x", (pos.x - m_safeArea.getMinX()) / width);
+        Mod::get()->setSavedValue<double>("panel-pos-y", (pos.y - m_safeArea.getMinY()) / height);
+        Mod::get()->setSavedValue<double>("panel-user-mul", m_deckScale / std::max(m_baseScale, 0.001f));
+    }
+
+    void AfterflowOverlay::resetDeckPlacement() {
+        Mod::get()->setSavedValue<double>("panel-pos-x", 0.5);
+        Mod::get()->setSavedValue<double>("panel-pos-y", 0.5);
+        Mod::get()->setSavedValue<double>("panel-user-mul", 1.0);
+        layout();
+    }
+
+    void AfterflowOverlay::finishDeckGesture() {
+        bool wasResize = m_resizingDeck;
+        bool wasMoved = m_deckMoved;
+        m_draggingDeck = false;
+        m_resizingDeck = false;
+        m_deckMoved = false;
+        m_pressedTarget = HitTarget::None;
+        if (wasMoved) {
+            saveDeckPlacement();
+        }
+        else if (wasResize) {
+            // double tap on the grip puts the panel back to its default size and spot
+            double now = std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count();
+            if (now - m_lastGripTap < 0.45) {
+                m_lastGripTap = -10.0;
+                resetDeckPlacement();
+            }
+            else {
+                m_lastGripTap = now;
+            }
+        }
     }
 
     CCPoint AfterflowOverlay::defaultLauncherPosition() const {
@@ -4355,13 +4462,94 @@ finally {
             pick = static_cast<int>(rng() % tips.size());
         }
         m_tipIndex = pick;
-        m_tipLabel->setString(capFirst(tips[pick]).c_str());
-        m_tipLabel->setScale(0.56f * getUIFontScale());
-        fitLabelToWidth(m_tipLabel, m_tipRight - m_tipLeft);
-        m_tipLabel->stopAllActions();
-        m_tipLabel->setOpacity(0);
-        m_tipLabel->runAction(CCFadeTo::create(0.35f, 255));
+        std::string text = capFirst(tips[pick]);
+        float const baseScale = 0.56f * getUIFontScale();
+        float const maxWidth = m_tipRight - m_tipLeft;
+        auto* label = m_tipLabel;
+        // new tip pops in: fades up from below with a little overshoot
+        auto playIn = [this, label, text, baseScale, maxWidth]() {
+            label->setString(text.c_str());
+            label->setScale(baseScale);
+            fitLabelToWidth(label, maxWidth);
+            float finalScale = label->getScale();
+            m_tipW = label->getContentSize().width * finalScale;
+            label->setScale(finalScale * 0.8f);
+            label->setOpacity(0);
+            label->setPosition(CCPoint(0.f, -9.f));
+            label->runAction(CCSpawn::create(
+                CCFadeTo::create(0.34f, 255),
+                CCEaseOut::create(CCMoveTo::create(0.34f, CCPoint(0.f, 0.f)), 2.f),
+                CCEaseBackOut::create(CCScaleTo::create(0.34f, finalScale)),
+                nullptr
+            ));
+        };
+        label->stopAllActions();
+        if (m_tipHasText) {
+            // old tip drifts up and fades out first
+            label->runAction(CCSequence::create(
+                CCSpawn::create(
+                    CCFadeTo::create(0.16f, 0),
+                    CCEaseIn::create(CCMoveBy::create(0.16f, CCPoint(0.f, 8.f)), 2.f),
+                    nullptr
+                ),
+                CallFuncExt::create(playIn),
+                nullptr
+            ));
+        }
+        else {
+            playIn();
+        }
+        m_tipHasText = true;
         m_tipClock = 0.f;
+    }
+
+    // slow orbiting sparkles around the tip, each one fades in and then
+    // fades out gradually instead of vanishing
+    void AfterflowOverlay::drawTipStars() {
+        if (!m_tipStars) {
+            return;
+        }
+        m_tipStars->clear();
+        if (!m_tipHasText) {
+            return;
+        }
+        constexpr float kPi = 3.14159265f;
+        constexpr int STAR_COUNT = 7;
+        ccColor3B const gold = color3(255, 214, 72);
+        ccColor4F const clear = color4(0, 0, 0, 0);
+        float const cx = m_tipW * 0.5f;
+        float const rx = m_tipW * 0.5f + 14.f;
+        float const ry = 14.f;
+        for (int i = 0; i < STAR_COUNT; ++i) {
+            float angle = m_tipTime * 0.45f + static_cast<float>(i) * (2.f * kPi / STAR_COUNT);
+            float phase = std::fmod(m_tipTime / 5.f + static_cast<float>(i) * 0.37f, 1.f);
+            float env = phase < 0.22f ? phase / 0.22f : 1.f - (phase - 0.22f) / 0.78f;
+            env = std::clamp(env, 0.f, 1.f);
+            env = env * env * (3.f - 2.f * env);
+            if (env < 0.03f) {
+                continue;
+            }
+            float x = cx + std::cos(angle) * rx;
+            float y = std::sin(angle) * ry;
+            float r = (2.6f + static_cast<float>(i % 3) * 0.9f) * (0.6f + 0.4f * env);
+            float rot = m_tipTime * 0.7f + static_cast<float>(i);
+            int alpha = static_cast<int>(env * 235.f);
+            auto diamond = [&](float angleOffset) {
+                float c = std::cos(rot + angleOffset);
+                float sn = std::sin(rot + angleOffset);
+                float len = r * 1.5f;
+                float wid = r * 0.42f;
+                CCPoint v[4] = {
+                    CCPoint(x + c * len, y + sn * len),
+                    CCPoint(x - sn * wid, y + c * wid),
+                    CCPoint(x - c * len, y - sn * len),
+                    CCPoint(x + sn * wid, y - c * wid),
+                };
+                m_tipStars->drawPolygon(v, 4, color4(gold, alpha), 0.f, clear);
+            };
+            diamond(0.f);
+            diamond(kPi * 0.5f);
+        }
     }
 
     void AfterflowOverlay::tickRefresh(float dt) {
@@ -4528,6 +4716,25 @@ finally {
             if (m_editingRow >= 0 && !(m_pressedTarget == HitTarget::TickField && stageSlot == m_editingRow)) {
                 endTickEdit();
             }
+            if (m_pressedTarget == HitTarget::DragPanel || m_pressedTarget == HitTarget::Resize) {
+                m_deck->stopAllActions();
+                m_deck->setScale(m_deckScale);
+                m_deckMoved = false;
+                m_dragTouchStart = convertTouchToNodeSpace(touch);
+                auto deckPos = m_deck->getPosition();
+                if (m_pressedTarget == HitTarget::DragPanel) {
+                    m_draggingDeck = true;
+                    m_dragDeckStart = deckPos;
+                }
+                else {
+                    m_resizingDeck = true;
+                    m_resizeTL = CCPoint(
+                        deckPos.x - DECK_WIDTH * 0.5f * m_deckScale,
+                        deckPos.y + DECK_HEIGHT * 0.5f * m_deckScale
+                    );
+                }
+                return true;
+            }
             if (m_pressedTarget == HitTarget::TickSlider) {
                 m_draggingSlider = true;
                 m_sliderRow = stageSlot;
@@ -4578,6 +4785,36 @@ finally {
             return;
         }
 
+        if (m_draggingDeck || m_resizingDeck) {
+            CCPoint local = convertTouchToNodeSpace(touch);
+            float deltaX = local.x - m_dragTouchStart.x;
+            float deltaY = local.y - m_dragTouchStart.y;
+            if (deltaX * deltaX + deltaY * deltaY > 25.f) {
+                m_deckMoved = true;
+            }
+            if (m_draggingDeck) {
+                m_deck->setPosition(clampDeckPosition(
+                    CCPoint(m_dragDeckStart.x + deltaX, m_dragDeckStart.y + deltaY), m_deckScale
+                ));
+            }
+            else if (m_deckMoved) {
+                // bottom right corner follows the finger, top left stays put
+                float scaleX = (local.x - m_resizeTL.x) / DECK_WIDTH;
+                float scaleY = (m_resizeTL.y - local.y) / DECK_HEIGHT;
+                float newScale = std::clamp((scaleX + scaleY) * 0.5f, 0.2f, m_fitScale);
+                m_deckScale = newScale;
+                m_deck->setScale(newScale);
+                m_deck->setPosition(clampDeckPosition(
+                    CCPoint(
+                        m_resizeTL.x + DECK_WIDTH * 0.5f * newScale,
+                        m_resizeTL.y - DECK_HEIGHT * 0.5f * newScale
+                    ),
+                    newScale
+                ));
+            }
+            return;
+        }
+
         if (m_tutorialStep >= 0) {
             return;
         }
@@ -4615,6 +4852,11 @@ finally {
             else {
                 openPanel();
             }
+            return;
+        }
+
+        if (m_draggingDeck || m_resizingDeck) {
+            finishDeckGesture();
             return;
         }
 
@@ -4680,6 +4922,10 @@ finally {
     }
 
     void AfterflowOverlay::ccTouchCancelled(CCTouch*, CCEvent*) {
+        if (m_draggingDeck || m_resizingDeck) {
+            finishDeckGesture();
+            return;
+        }
         if (m_draggingSlider) {
             m_draggingSlider = false;
             m_sliderRow = -1;
@@ -5138,6 +5384,16 @@ finally {
         }
         dt = std::min(dt, 0.05f);
 
+        // the tip floats gently and its sparkles keep orbiting
+        m_tipTime += dt;
+        if (m_tipHolder) {
+            m_tipHolder->setPosition(CCPoint(
+                m_tipLeft + std::sin(m_tipTime * 0.9f) * 2.5f,
+                HEADER_Y + std::sin(m_tipTime * 1.7f) * 2.2f
+            ));
+        }
+        drawTipStars();
+
         if (m_tabIndX >= 0.f && std::abs(m_tabIndTarget - m_tabIndX) > 0.05f) {
             m_tabIndX += (m_tabIndTarget - m_tabIndX) * (1.f - std::exp(-16.f * dt));
             if (std::abs(m_tabIndTarget - m_tabIndX) < 0.3f) {
@@ -5236,6 +5492,9 @@ finally {
     }
 
     AfterflowOverlay::HitTarget AfterflowOverlay::hitTest(CCPoint const& point, int* stageSlot) const {
+        if (CCRect(DECK_WIDTH - 38.f, 0.f, 38.f, 26.f).containsPoint(point)) {
+            return HitTarget::Resize;
+        }
         if (logoRect().containsPoint(point)) {
             return HitTarget::Logo;
         }
@@ -5329,6 +5588,10 @@ finally {
                     }
                 }
             }
+        }
+        // the empty part of the top bar moves the whole panel
+        if (point.y >= 406.f) {
+            return HitTarget::DragPanel;
         }
         return HitTarget::None;
     }
