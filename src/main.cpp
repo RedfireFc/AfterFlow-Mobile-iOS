@@ -8,6 +8,7 @@
 #include <Geode/utils/Keyboard.hpp>
 #include <Geode/ui/GeodeUI.hpp>
 #include <Geode/ui/Popup.hpp>
+#include <Geode/ui/TextInput.hpp>
 #include <Geode/ui/SceneEvent.hpp>
 #include <Geode/cocos/touch_dispatcher/CCTouchDispatcher.h>
 #include <Geode/modify/MenuLayer.hpp>
@@ -146,7 +147,7 @@ namespace {
     constexpr int STAGE_MAX_STAGES = 24;
     constexpr int CUSTOM_STAGE_LIMIT = 4;
     constexpr int CUSTOM_TICKS_MIN = 1;
-    constexpr int CUSTOM_TICKS_MAX = 120;
+    constexpr int CUSTOM_TICKS_MAX = 240;
 
     struct CustomStage {
         int ticksAll;
@@ -2256,13 +2257,18 @@ finally {
     }
 
     void clickBudget() {
-        double budgetMilliseconds = state.userBudgetMilliseconds;
+        // above 240 steps per second every stage is simulated with st() times
+        // more (and shorter) ticks, so the same search costs roughly that much
+        // more cpu time. scale the time limit with it, otherwise the search runs
+        // out of budget and gives up. at 240 steps/s or below this is exactly 1.
+        double budgetScale = std::clamp(static_cast<double>(stepScale()), 1.0, 3.0);
+        double budgetMilliseconds = state.userBudgetMilliseconds * budgetScale;
         if (state.automaticBudget) {
             auto* cocosDirector = CCDirector::get();
             double frameInterval = cocosDirector->getAnimationInterval() * 1000.0;
             double frameDuration = cocosDirector->getDeltaTime() * 1000.0;
             if (frameInterval > 0.0 && frameDuration > std::max(frameInterval * 2.0, 20.0)) {
-                budgetMilliseconds = std::min(budgetMilliseconds, 4.0);
+                budgetMilliseconds = std::min(budgetMilliseconds, 4.0 * budgetScale);
             }
         }
         state.budgetMilliseconds = budgetMilliseconds;
@@ -2622,6 +2628,11 @@ finally {
         return CCRect(TICK_VALUE_X, tickRowY(row) - TICK_BTN_H * 0.5f, TICK_VALUE_W, TICK_BTN_H);
     }
 
+    // draggable hit area over the timing bar of a custom stage
+    CCRect tickSliderRect(int row) {
+        return CCRect(STAGE_BAR_X - 10.f, tickRowY(row) - 15.f, STAGE_BAR_WIDTH + 20.f, 30.f);
+    }
+
     CCRect stageSlotRect(int index) {
         return CCRect(
             STAGE_TRACK_X + STAGE_TRACK_PADDING + static_cast<float>(index) * (stageSlotWidth() + STAGE_TRACK_GAP),
@@ -2873,6 +2884,8 @@ finally {
             StageAdd,
             CustomRemove,
             TickAdjust,
+            TickField,
+            TickSlider,
         };
 
         void buildDeck();
@@ -2892,6 +2905,10 @@ finally {
         void pressTarget(HitTarget target);
         void restorePressed();
         void performTarget(HitTarget target);
+        void beginTickEdit(int row);
+        void endTickEdit();
+        void onTickInput(int row, std::string const& text);
+        void setSliderFromX(float x);
         void copyLog();
         void pauseForPanel();
         void resumeFromPanel();
@@ -2936,6 +2953,11 @@ finally {
         CCLabelBMFont* m_stageTimingLabels[4] = {};
         CCLabelBMFont* m_tickBtnLabels[8] = {};
         CCLabelBMFont* m_tickValueLabels[2] = {};
+        TextInput* m_tickInputs[2] = {};
+        int m_editingRow = -1;
+        bool m_suppressTickInput = false;
+        bool m_draggingSlider = false;
+        int m_sliderRow = -1;
         CCLabelBMFont* m_customAddLabel = nullptr;
         CCLabelBMFont* m_customRemoveLabel = nullptr;
         CCLabelBMFont* m_settingsHeaderLabel = nullptr;
@@ -3079,6 +3101,9 @@ finally {
         for (int index = 0; index < STAGE_MAX_STAGES; ++index) { m_stageNameLabels[index] = nullptr; }
         for (int index = 0; index < 8; ++index) { m_tickBtnLabels[index] = nullptr; }
         for (int index = 0; index < 2; ++index) { m_tickValueLabels[index] = nullptr; }
+        for (int index = 0; index < 2; ++index) { m_tickInputs[index] = nullptr; }
+        m_editingRow = -1;
+        m_draggingSlider = false;
         m_customAddLabel = nullptr;
         m_customRemoveLabel = nullptr;
         for (int index = 0; index < TAB_COUNT; ++index) { m_tabLabels[index] = nullptr; }
@@ -3253,6 +3278,17 @@ finally {
                 m_deck->addChild(valueLabel, 3);
                 m_tickValueLabels[row] = valueLabel;
             }
+            if (auto* tickInput = TextInput::create(TICK_VALUE_W - 6.f, "ticks")) {
+                tickInput->setFilter("0123456789");
+                tickInput->setMaxCharCount(3);
+                tickInput->setPosition(CCPoint(valueRect.getMidX(), valueRect.getMidY()));
+                tickInput->setVisible(false);
+                tickInput->setCallback([this, row](std::string const& text) {
+                    this->onTickInput(row, text);
+                });
+                m_deck->addChild(tickInput, 4);
+                m_tickInputs[row] = tickInput;
+            }
             static char const* glyphs[4] = { "-5", "-1", "+1", "+5" };
             for (int which = 0; which < 4; ++which) {
                 auto buttonRect = tickButtonRect(row, which);
@@ -3367,6 +3403,7 @@ finally {
         if (!m_deck) {
             return;
         }
+        endTickEdit();
         m_pressedTarget = HitTarget::None;
         m_pressedNode = nullptr;
         m_deck->removeAllChildrenWithCleanup(true);
@@ -3527,7 +3564,9 @@ finally {
         }
         if (m_stageTrack) { m_stageTrack->setVisible(showStage); }
         for (int i = 0; i < 2; ++i) {
-            if (m_tickValueLabels[i]) { m_tickValueLabels[i]->setVisible(showStage); }
+            bool customShown = showStage && customStageFor(state.stageIndex);
+            if (m_tickValueLabels[i]) { m_tickValueLabels[i]->setVisible(showStage && !customShown); }
+            if (m_tickInputs[i]) { m_tickInputs[i]->setVisible(customShown); }
         }
         for (int i = 0; i < 8; ++i) {
             if (m_tickBtnLabels[i]) { m_tickBtnLabels[i]->setVisible(showStage && customStageFor(state.stageIndex)); }
@@ -3642,7 +3681,7 @@ finally {
 
             int shownAll = state.isEnabled ? state.ticksAllModes : 0;
             int shownWave = state.isEnabled ? state.ticksWaveMode : 0;
-            int barMax = std::max({ 40, shownAll, shownWave });
+            int barMax = isCustomSelected ? CUSTOM_TICKS_MAX : std::max({ 40, shownAll, shownWave });
 
             float const barHeight = 8.f;
             auto drawBar = [&](float y, int ticks, ccColor3B tint) {
@@ -3656,6 +3695,13 @@ finally {
                 );
                 if (ticks > 0) {
                     float ratio = std::clamp(static_cast<float>(ticks) / static_cast<float>(barMax), 0.03f, 1.f);
+                    if (isCustomSelected) {
+                        // custom stages use the same 1..120 mapping as the slider
+                        ratio = std::clamp(
+                            static_cast<float>(ticks - CUSTOM_TICKS_MIN) / static_cast<float>(CUSTOM_TICKS_MAX - CUSTOM_TICKS_MIN),
+                            0.f, 1.f
+                        );
+                    }
                     drawCurvedRect(
                         m_stageTrack,
                         CCRect(STAGE_BAR_X, y - barHeight * 0.5f, std::max(6.f, STAGE_BAR_WIDTH * ratio), barHeight),
@@ -3664,6 +3710,11 @@ finally {
                         color4(0, 0, 0, 0),
                         0.f
                     );
+                    if (isCustomSelected) {
+                        CCPoint knob(STAGE_BAR_X + STAGE_BAR_WIDTH * ratio, y);
+                        m_stageTrack->drawDot(knob, 9.f, color4(tint, 255));
+                        m_stageTrack->drawDot(knob, 5.5f, color4(248, 249, 253, 255));
+                    }
                 }
             };
             drawBar(STAGE_TIMING_ALL_Y, shownAll, live);
@@ -3685,7 +3736,22 @@ finally {
                     m_tickValueLabels[row]->setString(state.isEnabled ? fmt::format("{}t", ticks).c_str() : "off");
                     m_tickValueLabels[row]->setColor(state.isEnabled ? color3(240, 241, 246) : warningColor());
                     fitLabelToWidth(m_tickValueLabels[row], TICK_VALUE_W - 10.f);
-                    m_tickValueLabels[row]->setVisible(showStageTab);
+                    m_tickValueLabels[row]->setVisible(showStageTab && !isCustomSelected);
+                }
+                if (auto* tickInput = m_tickInputs[row]) {
+                    bool inputShown = showStageTab && isCustomSelected;
+                    tickInput->setVisible(inputShown);
+                    if (inputShown && row != m_editingRow) {
+                        auto wanted = fmt::format("{}", row == 0 ? customStage->ticksAll : customStage->ticksWave);
+                        if (tickInput->getString() != wanted) {
+                            m_suppressTickInput = true;
+                            tickInput->setString(wanted);
+                            m_suppressTickInput = false;
+                        }
+                    }
+                    if (!inputShown && m_editingRow == row) {
+                        endTickEdit();
+                    }
                 }
             }
 
@@ -3916,6 +3982,7 @@ finally {
         if (!m_isOpen) {
             return;
         }
+        endTickEdit();
         m_isOpen = false;
         unschedule(schedule_selector(AfterflowOverlay::tickRefresh));
 
@@ -4007,6 +4074,7 @@ finally {
         if (m_isOpen) {
             CCPoint deckPoint = m_deck->convertToNodeSpace(touch->getLocation());
             if (!CCRect(0.f, 0.f, DECK_WIDTH, DECK_HEIGHT).containsPoint(deckPoint)) {
+                endTickEdit();
                 m_pressedTarget = HitTarget::Outside;
                 m_pressedStageSlot = -1;
                 return true;
@@ -4014,6 +4082,15 @@ finally {
             int stageSlot = -1;
             m_pressedTarget = hitTest(deckPoint, &stageSlot);
             m_pressedStageSlot = stageSlot;
+            if (m_editingRow >= 0 && !(m_pressedTarget == HitTarget::TickField && stageSlot == m_editingRow)) {
+                endTickEdit();
+            }
+            if (m_pressedTarget == HitTarget::TickSlider) {
+                m_draggingSlider = true;
+                m_sliderRow = stageSlot;
+                setSliderFromX(deckPoint.x);
+                return true;
+            }
             if (m_pressedTarget != HitTarget::None) {
                 pressTarget(m_pressedTarget);
             }
@@ -4053,6 +4130,13 @@ finally {
             return;
         }
 
+        if (m_draggingSlider) {
+            if (m_isOpen) {
+                setSliderFromX(m_deck->convertToNodeSpace(touch->getLocation()).x);
+            }
+            return;
+        }
+
         if (m_isOpen && m_pressedTarget != HitTarget::None) {
             CCPoint deckPoint = m_deck->convertToNodeSpace(touch->getLocation());
             int stageSlot = -1;
@@ -4079,6 +4163,14 @@ finally {
             else {
                 openPanel();
             }
+            return;
+        }
+
+        if (m_draggingSlider) {
+            m_draggingSlider = false;
+            m_sliderRow = -1;
+            m_pressedTarget = HitTarget::None;
+            saveCustomStages();
             return;
         }
 
@@ -4110,6 +4202,11 @@ finally {
     }
 
     void AfterflowOverlay::ccTouchCancelled(CCTouch*, CCEvent*) {
+        if (m_draggingSlider) {
+            m_draggingSlider = false;
+            m_sliderRow = -1;
+            saveCustomStages();
+        }
         if (m_isDraggingLauncher) {
             m_isDraggingLauncher = false;
             if (m_launcher) {
@@ -4121,6 +4218,69 @@ finally {
         }
         restorePressed();
         m_pressedTarget = HitTarget::None;
+    }
+
+    void AfterflowOverlay::beginTickEdit(int row) {
+        if (row < 0 || row > 1 || !m_tickInputs[row] || !customStageFor(state.stageIndex)) {
+            return;
+        }
+        m_editingRow = row;
+        // start empty so the digits typed replace the old value
+        m_suppressTickInput = true;
+        m_tickInputs[row]->setString("");
+        m_suppressTickInput = false;
+        m_tickInputs[row]->focus();
+    }
+
+    void AfterflowOverlay::endTickEdit() {
+        if (m_editingRow >= 0 && m_editingRow < 2 && m_tickInputs[m_editingRow]) {
+            m_tickInputs[m_editingRow]->defocus();
+        }
+        m_editingRow = -1;
+    }
+
+    void AfterflowOverlay::onTickInput(int row, std::string const& text) {
+        if (m_suppressTickInput || row < 0 || row > 1) {
+            return;
+        }
+        auto* custom = customStageFor(state.stageIndex);
+        if (!custom || text.empty()) {
+            return;
+        }
+        if (m_editingRow < 0) {
+            m_editingRow = row;
+        }
+        int raw = std::atoi(text.c_str());
+        int value = clampCustomTicks(raw);
+        if (raw > CUSTOM_TICKS_MAX && m_tickInputs[row]) {
+            m_suppressTickInput = true;
+            m_tickInputs[row]->setString(fmt::format("{}", value));
+            m_suppressTickInput = false;
+        }
+        int& ticks = row == 0 ? custom->ticksAll : custom->ticksWave;
+        if (ticks == value) {
+            return;
+        }
+        ticks = value;
+        saveCustomStages();
+        setStageIndex(state.stageIndex);
+    }
+
+    void AfterflowOverlay::setSliderFromX(float x) {
+        auto* custom = customStageFor(state.stageIndex);
+        if (!custom || m_sliderRow < 0 || m_sliderRow > 1) {
+            return;
+        }
+        float ratio = std::clamp((x - STAGE_BAR_X) / STAGE_BAR_WIDTH, 0.f, 1.f);
+        int value = clampCustomTicks(static_cast<int>(std::lround(
+            static_cast<float>(CUSTOM_TICKS_MIN) + ratio * static_cast<float>(CUSTOM_TICKS_MAX - CUSTOM_TICKS_MIN)
+        )));
+        int& ticks = m_sliderRow == 0 ? custom->ticksAll : custom->ticksWave;
+        if (ticks == value) {
+            return;
+        }
+        ticks = value;
+        setStageIndex(state.stageIndex);
     }
 
     AfterflowOverlay::HitTarget AfterflowOverlay::hitTest(CCPoint const& point, int* stageSlot) const {
@@ -4192,6 +4352,18 @@ finally {
             if (customStageFor(state.stageIndex)) {
                 if (customRemoveRect().containsPoint(point)) {
                     return HitTarget::CustomRemove;
+                }
+                for (int row = 0; row < 2; ++row) {
+                    if (tickValueRect(row).containsPoint(point)) {
+                        if (stageSlot) { *stageSlot = row; }
+                        return HitTarget::TickField;
+                    }
+                }
+                for (int row = 0; row < 2; ++row) {
+                    if (tickSliderRect(row).containsPoint(point)) {
+                        if (stageSlot) { *stageSlot = row; }
+                        return HitTarget::TickSlider;
+                    }
                 }
                 for (int row = 0; row < 2; ++row) {
                     for (int which = 0; which < 4; ++which) {
@@ -4296,6 +4468,12 @@ finally {
                 }
                 break;
             }
+            case HitTarget::TickField: {
+                beginTickEdit(m_pressedStageSlot);
+                break;
+            }
+            case HitTarget::TickSlider:
+                break;
             case HitTarget::TickAdjust: {
                 if (auto* custom = customStageFor(state.stageIndex)) {
                     static int const deltas[4] = { -5, -1, 1, 5 };
@@ -5837,7 +6015,12 @@ finally {
         }
 
         bool hasFlyer = isFlying(player1) || (player2 && isFlying(player2));
-        int horizonTicks = st(hasFlyer ? 48 : std::clamp(state.groundHorizonTicks, 48, 240));
+        int groundHorizon = std::clamp(state.groundHorizonTicks, 48, 240);
+        if (!hasFlyer && state.ticksAllModes + 48 > groundHorizon) {
+            // a long custom delay needs a lookahead that reaches past it
+            groundHorizon = std::min(state.ticksAllModes + 48, 288);
+        }
+        int horizonTicks = st(hasFlyer ? 48 : groundHorizon);
         if (hasWave) {
             horizonTicks = fullWaveHorizon(isMini);
         }
