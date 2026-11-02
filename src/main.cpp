@@ -24,6 +24,7 @@
 #include <cctype>
 #include <chrono>
 #include <cstdint>
+#include <cstdio>
 #include <cstdlib>
 #include <cmath>
 #include <cwctype>
@@ -143,9 +144,21 @@ namespace {
     constexpr int STAGE_TABLE_SIZE = sizeof(STAGE_TABLE) / sizeof(STAGE_TABLE[0]);
 
     constexpr int STAGE_MAX_STAGES = 24;
+    constexpr int CUSTOM_STAGE_LIMIT = 4;
+    constexpr int CUSTOM_TICKS_MIN = 1;
+    constexpr int CUSTOM_TICKS_MAX = 120;
 
-    std::vector<std::string> g_customStages;
+    struct CustomStage {
+        int ticksAll;
+        int ticksWave;
+    };
+
+    std::vector<CustomStage> g_customStages;
     bool g_customStagesLoaded = false;
+
+    int clampCustomTicks(int value) {
+        return std::clamp(value, CUSTOM_TICKS_MIN, CUSTOM_TICKS_MAX);
+    }
 
     void loadCustomStages() {
         if (g_customStagesLoaded) {
@@ -154,16 +167,25 @@ namespace {
         g_customStagesLoaded = true;
         g_customStages.clear();
         std::string raw = Mod::get()->getSavedValue<std::string>("custom-stages", "");
-        std::string piece;
-        for (size_t index = 0; index <= raw.size(); ++index) {
-            if (index == raw.size() || raw[index] == ';') {
-                if (!piece.empty()) {
-                    g_customStages.push_back(piece);
-                }
-                piece.clear();
-            } else {
-                piece += raw[index];
+        size_t start = 0;
+        while (start <= raw.size()) {
+            size_t end = raw.find(';', start);
+            if (end == std::string::npos) {
+                end = raw.size();
             }
+            std::string piece = raw.substr(start, end - start);
+            if (!piece.empty() && static_cast<int>(g_customStages.size()) < CUSTOM_STAGE_LIMIT) {
+                int ticksAll = 0;
+                int ticksWave = 0;
+                if (std::sscanf(piece.c_str(), "%d:%d", &ticksAll, &ticksWave) == 2) {
+                    g_customStages.push_back({ clampCustomTicks(ticksAll), clampCustomTicks(ticksWave) });
+                }
+                else {
+                    // old name-only placeholder from v2.4.0/2.4.1
+                    g_customStages.push_back({ 8, 8 });
+                }
+            }
+            start = end + 1;
         }
     }
 
@@ -171,10 +193,19 @@ namespace {
         std::string raw;
         for (size_t index = 0; index < g_customStages.size(); ++index) {
             if (index > 0) { raw += ';'; }
-            raw += g_customStages[index];
+            raw += fmt::format("{}:{}", g_customStages[index].ticksAll, g_customStages[index].ticksWave);
         }
         Mod::get()->setSavedValue<std::string>("custom-stages", raw);
         (void)Mod::get()->saveData();
+    }
+
+    CustomStage* customStageFor(int stageIndex) {
+        loadCustomStages();
+        int custom = stageIndex - STAGE_TABLE_SIZE;
+        if (custom >= 0 && custom < static_cast<int>(g_customStages.size())) {
+            return &g_customStages[custom];
+        }
+        return nullptr;
     }
 
     int stageTotalCount() {
@@ -2243,6 +2274,10 @@ finally {
             state.isEnabled = stageDefinition.isEnabled;
             state.ticksAllModes = stageDefinition.ticksAllModes;
             state.ticksWaveMode = stageDefinition.ticksWaveMode;
+        } else if (auto* custom = customStageFor(state.stageIndex)) {
+            state.isEnabled = true;
+            state.ticksAllModes = custom->ticksAll;
+            state.ticksWaveMode = custom->ticksWave;
         } else {
             state.isEnabled = true;
             state.ticksAllModes = 2;
@@ -2267,7 +2302,7 @@ finally {
 
     constexpr float DECK_WIDTH = 700.f;
     constexpr float DECK_HEIGHT = 460.f;
-    constexpr float DECK_RADIUS = 22.f;
+    constexpr float DECK_RADIUS = 10.f;
     constexpr float MARGIN = 24.f;
     constexpr float CONTENT_X = MARGIN;
     constexpr float CONTENT_WIDTH = DECK_WIDTH - MARGIN * 2.f;
@@ -2285,7 +2320,7 @@ finally {
     constexpr float CARD_TOP = 350.f;
     constexpr float CARD_BOTTOM = 76.f;
     constexpr float CARD_HEIGHT = CARD_TOP - CARD_BOTTOM;
-    constexpr float CARD_RADIUS = 16.f;
+    constexpr float CARD_RADIUS = 8.f;
 
     constexpr float LOG_X = CONTENT_X;
     constexpr float LOG_Y = CARD_BOTTOM;
@@ -2315,11 +2350,18 @@ finally {
     constexpr float STAGE_CELL_HEIGHT = 28.f;
     constexpr float STAGE_LABEL_Y = STAGE_TRACK_Y + STAGE_TRACK_HEIGHT * 0.5f;
 
-    constexpr float STAGE_TIMING_ALL_Y = 162.f;
-    constexpr float STAGE_TIMING_WAVE_Y = 118.f;
-    constexpr float STAGE_HINT_Y = 92.f;
-    constexpr float STAGE_BAR_X = CONTENT_X + 150.f;
-    constexpr float STAGE_BAR_WIDTH = CONTENT_RIGHT - 20.f - STAGE_BAR_X;
+    constexpr float STAGE_TIMING_ALL_Y = 168.f;
+    constexpr float STAGE_TIMING_WAVE_Y = 122.f;
+    constexpr float STAGE_HINT_Y = 94.f;
+    constexpr float STAGE_BAR_X = 430.f;
+    constexpr float STAGE_BAR_WIDTH = CONTENT_RIGHT - 22.f - STAGE_BAR_X;
+
+    constexpr float TICK_BTN_W = 42.f;
+    constexpr float TICK_BTN_H = 30.f;
+    constexpr float TICK_BTN_X[4] = { 146.f, 192.f, 324.f, 370.f };
+    constexpr float TICK_VALUE_X = 238.f;
+    constexpr float TICK_VALUE_W = 80.f;
+    constexpr float TICK_LABEL_MAX_WIDTH = 92.f;
 
     constexpr float COPY_X = CONTENT_RIGHT - 20.f - 74.f;
     constexpr float COPY_Y = LOG_HEADER_Y - 16.f;
@@ -2524,7 +2566,7 @@ finally {
             return;
         }
 
-        constexpr int SEGMENTS = 24;
+        constexpr int SEGMENTS = 12;
         constexpr float PI = 3.14159265358979323846f;
         CCPoint points[4 * (SEGMENTS + 1)];
         int count = 0;
@@ -2538,7 +2580,46 @@ finally {
         addArc(right - radius, top - radius, 0.f, PI * 0.5f);
         addArc(left + radius, top - radius, PI * 0.5f, PI);
         addArc(left + radius, bottom + radius, PI, PI * 1.5f);
-        node->drawPolygon(points, static_cast<unsigned int>(count), fill, borderWidth, border);
+        // consecutive arcs share a point whenever the straight edge between them
+        // has zero length (pill shapes). cocos2d turns those duplicate points
+        // into spikes when it builds the border, so drop them first
+        CCPoint filtered[4 * (SEGMENTS + 1)];
+        int filteredCount = 0;
+        auto isNear = [](CCPoint const& first, CCPoint const& second) {
+            return std::abs(first.x - second.x) < 0.05f && std::abs(first.y - second.y) < 0.05f;
+        };
+        for (int index = 0; index < count; ++index) {
+            if (filteredCount == 0 || !isNear(points[index], filtered[filteredCount - 1])) {
+                filtered[filteredCount++] = points[index];
+            }
+        }
+        if (filteredCount > 1 && isNear(filtered[0], filtered[filteredCount - 1])) {
+            --filteredCount;
+        }
+        if (filteredCount < 3) {
+            return;
+        }
+        node->drawPolygon(filtered, static_cast<unsigned int>(filteredCount), fill, borderWidth, border);
+    }
+
+    CCRect customAddRect() {
+        return CCRect(CONTENT_RIGHT - 22.f - 104.f, STAGE_META_Y - 15.f, 104.f, 30.f);
+    }
+
+    CCRect customRemoveRect() {
+        return CCRect(CONTENT_RIGHT - 22.f - 104.f - 8.f - 88.f, STAGE_META_Y - 15.f, 88.f, 30.f);
+    }
+
+    float tickRowY(int row) {
+        return row == 0 ? STAGE_TIMING_ALL_Y : STAGE_TIMING_WAVE_Y;
+    }
+
+    CCRect tickButtonRect(int row, int which) {
+        return CCRect(TICK_BTN_X[which], tickRowY(row) - TICK_BTN_H * 0.5f, TICK_BTN_W, TICK_BTN_H);
+    }
+
+    CCRect tickValueRect(int row) {
+        return CCRect(TICK_VALUE_X, tickRowY(row) - TICK_BTN_H * 0.5f, TICK_VALUE_W, TICK_BTN_H);
     }
 
     CCRect stageSlotRect(int index) {
@@ -2617,12 +2698,30 @@ finally {
         if (index >= 0 && index < STAGE_TABLE_SIZE) {
             return stageName(index);
         }
+        static char const* customNames[CUSTOM_STAGE_LIMIT] = { "c1", "c2", "c3", "c4" };
         loadCustomStages();
         int custom = index - STAGE_TABLE_SIZE;
-        if (custom >= 0 && custom < static_cast<int>(g_customStages.size())) {
-            return g_customStages[custom].c_str();
+        if (custom >= 0 && custom < static_cast<int>(g_customStages.size()) && custom < CUSTOM_STAGE_LIMIT) {
+            return customNames[custom];
         }
         return "?";
+    }
+
+    std::string stageTitleAt(int index) {
+        if (index >= STAGE_TABLE_SIZE) {
+            return fmt::format("custom {}", index - STAGE_TABLE_SIZE + 1);
+        }
+        return stageLabelAt(index);
+    }
+
+    void fitLabelToWidth(CCLabelBMFont* label, float maxWidth) {
+        if (!label || maxWidth <= 0.f) {
+            return;
+        }
+        float width = label->getContentSize().width * label->getScale();
+        if (width > maxWidth && width > 0.f) {
+            label->setScale(label->getScale() * maxWidth / width);
+        }
     }
     CCNode* makeDeckButton(CCNode* parent, CCRect const& rect, std::string const& text, bool isFilled, bool useDisplayFont, float fontScale, bool isTinted = false) {
         auto* button = CCNode::create();
@@ -2632,7 +2731,7 @@ finally {
 
         ccColor4F transparent = color4(0, 0, 0, 0);
         auto* background = makeDrawNode();
-        float radius = rect.size.height * 0.44f;
+        float radius = std::min(rect.size.height * 0.25f, 7.f);
         if (isFilled) {
             drawCurvedRect(background, CCRect(0.f, 0.f, rect.size.width, rect.size.height), radius, color4(accentColor(), 238), color4(255, 255, 255, 44), 1.f);
         }
@@ -2665,7 +2764,7 @@ finally {
         drawCurvedRect(
             background,
             CCRect(0.f, 0.f, rect.size.width, rect.size.height),
-            12.f,
+            6.f,
             color4(255, 255, 255, 6),
             color4(255, 255, 255, 18),
             1.f
@@ -2772,6 +2871,8 @@ finally {
             ModeIcon,
             ModeIconAdd,
             StageAdd,
+            CustomRemove,
+            TickAdjust,
         };
 
         void buildDeck();
@@ -2833,6 +2934,10 @@ finally {
         CCLabelBMFont* m_toolsTitleLabels[3] = {};
         CCLabelBMFont* m_toolsDescLabels[3] = {};
         CCLabelBMFont* m_stageTimingLabels[4] = {};
+        CCLabelBMFont* m_tickBtnLabels[8] = {};
+        CCLabelBMFont* m_tickValueLabels[2] = {};
+        CCLabelBMFont* m_customAddLabel = nullptr;
+        CCLabelBMFont* m_customRemoveLabel = nullptr;
         CCLabelBMFont* m_settingsHeaderLabel = nullptr;
         CCLabelBMFont* m_settingsValueLabels[2] = {};
         CCLabelBMFont* m_settingsHintLabel = nullptr;
@@ -2972,6 +3077,10 @@ finally {
         m_modeIcons.clear();
         for (int index = 0; index < LOG_LINE_COUNT; ++index) { m_activityLines[index] = nullptr; }
         for (int index = 0; index < STAGE_MAX_STAGES; ++index) { m_stageNameLabels[index] = nullptr; }
+        for (int index = 0; index < 8; ++index) { m_tickBtnLabels[index] = nullptr; }
+        for (int index = 0; index < 2; ++index) { m_tickValueLabels[index] = nullptr; }
+        m_customAddLabel = nullptr;
+        m_customRemoveLabel = nullptr;
         for (int index = 0; index < TAB_COUNT; ++index) { m_tabLabels[index] = nullptr; }
         for (int index = 0; index < CHIP_COUNT; ++index) { m_chipLabels[index] = nullptr; }
         for (int index = 0; index < 4; ++index) {
@@ -3010,7 +3119,7 @@ finally {
 
         m_shell = makeDrawNode();
         m_deck->addChild(m_shell, 1);
-        drawCurvedRect(m_shell, CCRect(-12.f, -22.f, DECK_WIDTH + 24.f, DECK_HEIGHT + 22.f), DECK_RADIUS + 14.f, color4(0, 0, 0, 72), none, 0.f);
+        drawCurvedRect(m_shell, CCRect(-12.f, -22.f, DECK_WIDTH + 24.f, DECK_HEIGHT + 22.f), DECK_RADIUS + 6.f, color4(0, 0, 0, 72), none, 0.f);
         drawCurvedRect(m_shell, CCRect(0.f, 0.f, DECK_WIDTH, DECK_HEIGHT), DECK_RADIUS, color4(shellTint, 252), color4(255, 255, 255, 26), 1.f);
         drawCurvedRect(m_shell, CCRect(CONTENT_X, CARD_BOTTOM, CONTENT_WIDTH, CARD_HEIGHT), CARD_RADIUS, color4(surface, 255), color4(255, 255, 255, 18), 1.f);
 
@@ -3097,12 +3206,6 @@ finally {
         m_stageIndexLabel->setPosition(CCPoint(CONTENT_RIGHT - 22.f, STAGE_NAME_Y));
         m_deck->addChild(m_stageIndexLabel, 3);
 
-        if (auto* addStage = makeLabel("+", false, 0.62f, accentColor())) {
-            addStage->setAnchorPoint(CCPoint(0.5f, 0.5f));
-            addStage->setPosition(CCPoint(CONTENT_RIGHT - 68.f, STAGE_NAME_Y));
-            m_deck->addChild(addStage, 3);
-        }
-
         m_stageDescriptionLabel = makeLabel("", false, 0.74f, softTextColor());
         m_stageDescriptionLabel->setAnchorPoint(CCPoint(0.f, 0.5f));
         m_stageDescriptionLabel->setPosition(CCPoint(LOG_X + 22.f, STAGE_META_Y));
@@ -3122,13 +3225,15 @@ finally {
             m_stageNameLabels[index] = nameLabel;
         }
 
-        if (auto* allLabel = makeLabel("all modes", false, 0.74f, softTextColor())) {
+        if (auto* allLabel = makeLabel("all modes", false, 0.66f, softTextColor())) {
+            fitLabelToWidth(allLabel, TICK_LABEL_MAX_WIDTH);
             allLabel->setAnchorPoint(CCPoint(0.f, 0.5f));
             allLabel->setPosition(CCPoint(LOG_X + 22.f, STAGE_TIMING_ALL_Y));
             m_deck->addChild(allLabel, 3);
             m_stageTimingLabels[0] = allLabel;
         }
-        if (auto* waveLabel = makeLabel("wave", false, 0.74f, softTextColor())) {
+        if (auto* waveLabel = makeLabel("wave", false, 0.66f, softTextColor())) {
+            fitLabelToWidth(waveLabel, TICK_LABEL_MAX_WIDTH);
             waveLabel->setAnchorPoint(CCPoint(0.f, 0.5f));
             waveLabel->setPosition(CCPoint(LOG_X + 22.f, STAGE_TIMING_WAVE_Y));
             m_deck->addChild(waveLabel, 3);
@@ -3139,6 +3244,39 @@ finally {
             hint->setPosition(CCPoint(LOG_X + 22.f, STAGE_HINT_Y));
             m_deck->addChild(hint, 3);
             m_stageTimingLabels[2] = hint;
+        }
+
+        for (int row = 0; row < 2; ++row) {
+            auto valueRect = tickValueRect(row);
+            if (auto* valueLabel = makeLabel("0t", true, 0.62f, color3(240, 241, 246))) {
+                valueLabel->setPosition(CCPoint(valueRect.getMidX(), valueRect.getMidY()));
+                m_deck->addChild(valueLabel, 3);
+                m_tickValueLabels[row] = valueLabel;
+            }
+            static char const* glyphs[4] = { "-5", "-1", "+1", "+5" };
+            for (int which = 0; which < 4; ++which) {
+                auto buttonRect = tickButtonRect(row, which);
+                if (auto* glyph = makeLabel(glyphs[which], false, 0.62f, accentColor())) {
+                    fitLabelToWidth(glyph, TICK_BTN_W - 8.f);
+                    glyph->setPosition(CCPoint(buttonRect.getMidX(), buttonRect.getMidY()));
+                    m_deck->addChild(glyph, 3);
+                    m_tickBtnLabels[row * 4 + which] = glyph;
+                }
+            }
+        }
+        if (auto* addLabel = makeLabel("+ custom", false, 0.62f, accentColor())) {
+            auto addRect = customAddRect();
+            fitLabelToWidth(addLabel, addRect.size.width - 12.f);
+            addLabel->setPosition(CCPoint(addRect.getMidX(), addRect.getMidY()));
+            m_deck->addChild(addLabel, 3);
+            m_customAddLabel = addLabel;
+        }
+        if (auto* removeLabel = makeLabel("remove", false, 0.62f, warningColor())) {
+            auto removeRect = customRemoveRect();
+            fitLabelToWidth(removeLabel, removeRect.size.width - 12.f);
+            removeLabel->setPosition(CCPoint(removeRect.getMidX(), removeRect.getMidY()));
+            m_deck->addChild(removeLabel, 3);
+            m_customRemoveLabel = removeLabel;
         }
 
         // ---- settings pane ----------------------------------------------------
@@ -3153,7 +3291,7 @@ finally {
             drawCurvedRect(
                 m_settingsBar,
                 settingsRowRect(row),
-                12.f,
+                7.f,
                 color4(255, 255, 255, 8),
                 color4(255, 255, 255, 22),
                 1.f
@@ -3174,7 +3312,7 @@ finally {
             drawCurvedRect(
                 m_themeSwatches,
                 rect,
-                11.f,
+                6.f,
                 color4(themeSurface, 255),
                 selected ? color4(accentColor(), 235) : color4(255, 255, 255, 34),
                 selected ? 2.f : 1.f
@@ -3325,7 +3463,7 @@ finally {
             float dotX = cell.getMinX() + 12.f;
             float dotY = cell.getMidY();
             bool isOn = values[index];
-            float radius = 9.f;
+            float radius = 5.f;
             if (isOn) {
                 drawCurvedRect(m_chipBar, cell, radius, color4(accentColor(), 34), color4(accentColor(), 120), 1.f);
                 m_chipBar->drawCircle(CCPoint(dotX, dotY), 4.f, color4(accentColor(), 255), 0.f, color4(0, 0, 0, 0), 18);
@@ -3351,7 +3489,7 @@ finally {
             drawCurvedRect(
                 m_tabBar,
                 CCRect(slot.getMinX() + 18.f, TAB_LABEL_Y - 17.f, slot.size.width - 36.f, 34.f),
-                17.f,
+                8.f,
                 color4(accentColor(), 26),
                 color4(accentColor(), 74),
                 1.f
@@ -3388,6 +3526,14 @@ finally {
             if (m_stageTimingLabels[i]) { m_stageTimingLabels[i]->setVisible(showStage); }
         }
         if (m_stageTrack) { m_stageTrack->setVisible(showStage); }
+        for (int i = 0; i < 2; ++i) {
+            if (m_tickValueLabels[i]) { m_tickValueLabels[i]->setVisible(showStage); }
+        }
+        for (int i = 0; i < 8; ++i) {
+            if (m_tickBtnLabels[i]) { m_tickBtnLabels[i]->setVisible(showStage && customStageFor(state.stageIndex)); }
+        }
+        if (m_customAddLabel) { m_customAddLabel->setVisible(showStage); }
+        if (m_customRemoveLabel) { m_customRemoveLabel->setVisible(showStage && customStageFor(state.stageIndex)); }
         if (m_stageBackButton) { m_stageBackButton->setVisible(false); }
         if (m_stageForwardButton) { m_stageForwardButton->setVisible(false); }
 
@@ -3421,7 +3567,7 @@ finally {
             m_stageIndexLabel->setColor(live);
         }
         if (m_stageNameLabel) {
-            m_stageNameLabel->setString(stageLabelAt(state.stageIndex));
+            m_stageNameLabel->setString(stageTitleAt(state.stageIndex).c_str());
             m_stageNameLabel->setColor(state.isEnabled ? color3(240, 241, 246) : warningColor());
         }
         if (m_stageDescriptionLabel) {
@@ -3447,7 +3593,7 @@ finally {
                 drawCurvedRect(
                     m_statusBeacon,
                     CCRect(pillX, centerY - STATUS_HEIGHT * 0.5f, pillWidth, STATUS_HEIGHT),
-                    STATUS_HEIGHT * 0.5f,
+                    7.f,
                     color4(255, 255, 255, 8),
                     color4(255, 255, 255, 20),
                     1.f
@@ -3462,7 +3608,7 @@ finally {
             drawCurvedRect(
                 m_stageTrack,
                 CCRect(STAGE_TRACK_X, STAGE_TRACK_Y, STAGE_TRACK_WIDTH, STAGE_TRACK_HEIGHT),
-                STAGE_TRACK_HEIGHT * 0.5f,
+                8.f,
                 color4(255, 255, 255, 7),
                 color4(255, 255, 255, 14),
                 1.f
@@ -3473,7 +3619,7 @@ finally {
             drawCurvedRect(
                 m_stageTrack,
                 stageCellRect(state.stageIndex),
-                10.f,
+                6.f,
                 color4(selectedTint, 48),
                 color4(selectedTint, 150),
                 1.f
@@ -3490,36 +3636,133 @@ finally {
                 nameLabel->setOpacity(isSelected ? 255 : 205);
             }
 
-            float barHeight = 10.f;
+            auto* customStage = customStageFor(state.stageIndex);
+            bool const isCustomSelected = customStage != nullptr;
+            bool const showStageTab = m_activeTab == 1;
+
+            int shownAll = state.isEnabled ? state.ticksAllModes : 0;
+            int shownWave = state.isEnabled ? state.ticksWaveMode : 0;
+            int barMax = std::max({ 40, shownAll, shownWave });
+
+            float const barHeight = 8.f;
             auto drawBar = [&](float y, int ticks, ccColor3B tint) {
                 drawCurvedRect(
                     m_stageTrack,
                     CCRect(STAGE_BAR_X, y - barHeight * 0.5f, STAGE_BAR_WIDTH, barHeight),
-                    barHeight * 0.5f,
+                    3.f,
                     color4(255, 255, 255, 12),
                     color4(0, 0, 0, 0),
                     0.f
                 );
-                float ratio = std::clamp(static_cast<float>(ticks) / 4.f, 0.04f, 1.f);
+                if (ticks > 0) {
+                    float ratio = std::clamp(static_cast<float>(ticks) / static_cast<float>(barMax), 0.03f, 1.f);
+                    drawCurvedRect(
+                        m_stageTrack,
+                        CCRect(STAGE_BAR_X, y - barHeight * 0.5f, std::max(6.f, STAGE_BAR_WIDTH * ratio), barHeight),
+                        3.f,
+                        color4(tint, 225),
+                        color4(0, 0, 0, 0),
+                        0.f
+                    );
+                }
+            };
+            drawBar(STAGE_TIMING_ALL_Y, shownAll, live);
+            drawBar(STAGE_TIMING_WAVE_Y, shownWave, live);
+
+            // value boxes
+            for (int row = 0; row < 2; ++row) {
                 drawCurvedRect(
                     m_stageTrack,
-                    CCRect(STAGE_BAR_X, y - barHeight * 0.5f, STAGE_BAR_WIDTH * ratio, barHeight),
-                    barHeight * 0.5f,
-                    color4(tint, 225),
-                    color4(0, 0, 0, 0),
-                    0.f
+                    tickValueRect(row),
+                    6.f,
+                    color4(255, 255, 255, 8),
+                    color4(255, 255, 255, 24),
+                    1.f
                 );
-            };
-            drawBar(STAGE_TIMING_ALL_Y, state.isEnabled ? state.ticksAllModes : 0, live);
-            drawBar(STAGE_TIMING_WAVE_Y, state.isEnabled ? state.ticksWaveMode : 0, live);
+                if (m_tickValueLabels[row]) {
+                    int ticks = row == 0 ? shownAll : shownWave;
+                    m_tickValueLabels[row]->setScale(0.62f * getUIFontScale());
+                    m_tickValueLabels[row]->setString(state.isEnabled ? fmt::format("{}t", ticks).c_str() : "off");
+                    m_tickValueLabels[row]->setColor(state.isEnabled ? color3(240, 241, 246) : warningColor());
+                    fitLabelToWidth(m_tickValueLabels[row], TICK_VALUE_W - 10.f);
+                    m_tickValueLabels[row]->setVisible(showStageTab);
+                }
+            }
+
+            // -5 / -1 / +1 / +5 buttons, only for custom stages
+            for (int row = 0; row < 2; ++row) {
+                int ticks = isCustomSelected ? (row == 0 ? customStage->ticksAll : customStage->ticksWave) : 0;
+                for (int which = 0; which < 4; ++which) {
+                    auto* glyph = m_tickBtnLabels[row * 4 + which];
+                    if (glyph) {
+                        glyph->setVisible(showStageTab && isCustomSelected);
+                    }
+                    if (!isCustomSelected) {
+                        continue;
+                    }
+                    bool atLimit = (which < 2) ? ticks <= CUSTOM_TICKS_MIN : ticks >= CUSTOM_TICKS_MAX;
+                    drawCurvedRect(
+                        m_stageTrack,
+                        tickButtonRect(row, which),
+                        6.f,
+                        color4(accentColor(), atLimit ? 8 : 30),
+                        color4(accentColor(), atLimit ? 40 : 95),
+                        1.f
+                    );
+                    if (glyph) {
+                        glyph->setOpacity(atLimit ? 90 : 255);
+                    }
+                }
+            }
+
+            // + custom / remove
+            bool canAddCustom = stageTotalCount() - STAGE_TABLE_SIZE < CUSTOM_STAGE_LIMIT;
+            drawCurvedRect(
+                m_stageTrack,
+                customAddRect(),
+                6.f,
+                color4(accentColor(), canAddCustom ? 30 : 8),
+                color4(accentColor(), canAddCustom ? 95 : 40),
+                1.f
+            );
+            if (m_customAddLabel) {
+                m_customAddLabel->setOpacity(canAddCustom ? 255 : 90);
+                m_customAddLabel->setVisible(showStageTab);
+            }
+            if (isCustomSelected) {
+                drawCurvedRect(
+                    m_stageTrack,
+                    customRemoveRect(),
+                    6.f,
+                    color4(warningColor(), 26),
+                    color4(warningColor(), 95),
+                    1.f
+                );
+            }
+            if (m_customRemoveLabel) {
+                m_customRemoveLabel->setVisible(showStageTab && isCustomSelected);
+            }
+
+            if (m_stageTimingLabels[2]) {
+                if (!state.isEnabled) {
+                    m_stageTimingLabels[2]->setString("raw input, nothing is buffered");
+                }
+                else if (isCustomSelected) {
+                    m_stageTimingLabels[2]->setString(fmt::format("tune each delay with -5 / -1 / +1 / +5, up to {} ticks", CUSTOM_TICKS_MAX).c_str());
+                }
+                else if (canAddCustom) {
+                    m_stageTimingLabels[2]->setString("tap + custom to make an editable copy of this stage");
+                }
+                else {
+                    m_stageTimingLabels[2]->setString("custom stage limit reached");
+                }
+            }
         }
 
         if (m_stageTimingLabels[0]) {
-            m_stageTimingLabels[0]->setString(fmt::format("all modes  {}t", state.ticksAllModes).c_str());
             m_stageTimingLabels[0]->setColor(state.isEnabled ? softTextColor() : warningColor());
         }
         if (m_stageTimingLabels[1]) {
-            m_stageTimingLabels[1]->setString(fmt::format("wave  {}t", state.ticksWaveMode).c_str());
             m_stageTimingLabels[1]->setColor(state.isEnabled ? softTextColor() : warningColor());
         }
 
@@ -3545,7 +3788,7 @@ finally {
                 drawCurvedRect(
                     m_logHighlight,
                     CCRect(LOG_X + 8.f, latestY - 10.f, LOG_WIDTH - 16.f, 20.f),
-                    6.f,
+                    4.f,
                     color4(accentColor(), 16),
                     color4(0, 0, 0, 0),
                     0.f
@@ -3943,9 +4186,21 @@ finally {
             }
         }
         if (m_activeTab == 1) {
-            CCRect addStageRect(CONTENT_RIGHT - 78.f, STAGE_NAME_Y - 10.f, 20.f, 20.f);
-            if (addStageRect.containsPoint(point)) {
+            if (customAddRect().containsPoint(point)) {
                 return HitTarget::StageAdd;
+            }
+            if (customStageFor(state.stageIndex)) {
+                if (customRemoveRect().containsPoint(point)) {
+                    return HitTarget::CustomRemove;
+                }
+                for (int row = 0; row < 2; ++row) {
+                    for (int which = 0; which < 4; ++which) {
+                        if (tickButtonRect(row, which).containsPoint(point)) {
+                            if (stageSlot) { *stageSlot = row * 4 + which; }
+                            return HitTarget::TickAdjust;
+                        }
+                    }
+                }
             }
         }
         return HitTarget::None;
@@ -4019,10 +4274,40 @@ finally {
         switch (target) {
             case HitTarget::StageAdd: {
                 loadCustomStages();
-                if (stageTotalCount() < STAGE_MAX_STAGES) {
-                    g_customStages.push_back("custom " + std::to_string(static_cast<int>(g_customStages.size()) + 1));
+                if (static_cast<int>(g_customStages.size()) < CUSTOM_STAGE_LIMIT) {
+                    int copyAll = state.isEnabled ? state.ticksAllModes : 8;
+                    int copyWave = state.isEnabled ? state.ticksWaveMode : 8;
+                    g_customStages.push_back({ clampCustomTicks(copyAll), clampCustomTicks(copyWave) });
                     saveCustomStages();
                     rebuildDeck();
+                    setStageIndex(STAGE_TABLE_SIZE + static_cast<int>(g_customStages.size()) - 1);
+                }
+                break;
+            }
+            case HitTarget::CustomRemove: {
+                loadCustomStages();
+                int custom = state.stageIndex - STAGE_TABLE_SIZE;
+                if (custom >= 0 && custom < static_cast<int>(g_customStages.size())) {
+                    g_customStages.erase(g_customStages.begin() + custom);
+                    saveCustomStages();
+                    int nextIndex = custom > 0 ? STAGE_TABLE_SIZE + custom - 1 : STAGE_TABLE_SIZE - 2;
+                    rebuildDeck();
+                    setStageIndex(nextIndex);
+                }
+                break;
+            }
+            case HitTarget::TickAdjust: {
+                if (auto* custom = customStageFor(state.stageIndex)) {
+                    static int const deltas[4] = { -5, -1, 1, 5 };
+                    int row = m_pressedStageSlot / 4;
+                    int which = m_pressedStageSlot % 4;
+                    if (row >= 0 && row < 2 && which >= 0 && which < 4) {
+                        int& ticks = row == 0 ? custom->ticksAll : custom->ticksWave;
+                        ticks = clampCustomTicks(ticks + deltas[which]);
+                        saveCustomStages();
+                        setStageIndex(state.stageIndex);
+                        refresh();
+                    }
                 }
                 break;
             }
@@ -4216,7 +4501,7 @@ finally {
                         MODE_ICON_STEP - 6.f,
                         MODE_ICON_SIZE + 8.f
                     ),
-                    8.f,
+                    5.f,
                     color4(255, 255, 255, isAdd ? 6 : 12),
                     color4(0, 0, 0, 0),
                     0.f
