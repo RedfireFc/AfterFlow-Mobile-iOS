@@ -4,7 +4,7 @@ by prsevend
 
 a predictive input cheat that fixes your early clicks and makes them accurate
 
-built for **geometry dash 2.2** (gd 2.2081 geode 5.11.2 windows). no menus and no in-game overlay: **f6** cycles stages in-level and **f9** toggles a terminal with a live log (kitty on linux/proton or a powershell log viewer on native windows). both keys are geode keybind settings so you can rebind them in mod settings or the keybinds popup
+built for **geometry dash 2.2** (gd 2.2081 geode 5.11.2 windows). no menus and no in-game overlay: **f6** cycles stages anywhere and **f9** toggles a terminal with a live log (kitty on linux/proton or a powershell log viewer on native windows). both keys are geode keybind settings so you can rebind them in mod settings or the keybinds popup
 
 ## what it does
 
@@ -12,19 +12,23 @@ geometry dash runs physics at a fixed **240 ticks per second**. afterflow keeps 
 
 the prediction understands cube, ball, ufo, spider, swing, wave, robot and ship movement plus orbs, pads, gravity portals, size portals, speed portals and click between frames' mid tick clicks. it never changes the real level state since ghosts are simulated in a detached layer and every object they touch is restored afterwards
 
+## mobile (android / ios)
+
+there is no keyboard on mobile, so afterflow adds an **AF** button to the pause menu, same size as the settings button. tap it to open a small panel with the arrows to cycle stages and a shortcut to mod settings. the terminal is desktop only
+
 ## keybinds
 
 afterflow uses geode keybind settings. open **mod settings → afterflow** (or geode's **keybinds** popup) to change them
 
 | Setting | Default | Where |
 | ------- | ------- | ----- |
-| Cycle Stage | F6 | in-level |
+| Cycle Stage | F6 | anywhere |
 | Terminal | F9 | everywhere |
 
 the first launch shows a one time note with the current bindings and a shortcut to mod settings. a saved flag records that it was seen so it does not come back
 
 ## stages
-press **f6** (or your bound cycle stage key) in level to cycle. the stage is remembered across sessions. the key also works while the terminal is focused
+press **f6** (or your bound cycle stage key) anywhere to cycle. the stage is remembered across sessions. outside a level the selected stage is written to the terminal log. the key also works while the terminal is focused
 
 | Stage | All modes | Wave |
 | ----- | --------- | ---- |
@@ -44,13 +48,13 @@ the game runs as a windows process under proton so it cannot start a linux progr
 
 afterflow detects whether it is running under proton, native windows, or native macos and picks the matching terminal. on native windows the terminal key launches **powershell** directly with a small winforms log viewer (title `Afterflow`). the log is a transient `%TEMP%\afterflow-terminal-<pid>.log` opened with delete-on-close, so windows removes it when the game exits. the viewer stays on top and tails the log. the systemd/kitty path is only used under proton
 
-if the viewer does not appear, afterflow shows a notification and writes the powershell error to the geode console. if the game is in exclusive fullscreen, switch to borderless or windowed so the viewer can be raised above it.
+if the viewer does not appear, afterflow writes the powershell error to the terminal log and the geode console. if the game is in exclusive fullscreen, switch to borderless or windowed so the viewer can be raised above it.
 
 on native macos the terminal key opens **terminal.app** with a bash log viewer (title `Afterflow`) that tails `$TMPDIR/afterflow-<user>/terminal.log`. the runtime directory is per-user and temporary, and no service or extra dependency is needed
 
 one setting controls the terminal: **enable terminal** turns the terminal key on or off and defaults to on
 
-the terminal captures **f6** and **f9** to match the default bindings so key escape sequences are not echoed. f6 forwards a stage cycle request to the game and f9 closes the window. if you rebind the settings the in game keys change but the terminal's capture keys stay f6/f9. the same capture works in the native windows and macos terminals
+the terminal captures **f6** and **f9** to match the default bindings so key escape sequences are not echoed. f6 forwards a stage cycle request to the game and f9 closes the window. on linux the kitty window maps f6 directly to a cycle helper, and on windows the log viewer handles f6 itself. if you rebind the settings the in game keys change but the terminal's capture keys stay f6/f9. the same capture works in the native windows and macos terminals
 
 the service is included as `afterflow-terminal-watch.sh` + `afterflow-terminal.service`:
 
@@ -62,7 +66,7 @@ systemctl --user daemon-reload
 systemctl --user enable --now afterflow-terminal.service
 ```
 
-the service starts with your user session and reads the running hyprland environment itself, so you do not need to import wayland variables manually. after updating, re-copy the unit and run `systemctl --user daemon-reload` then `systemctl --user restart afterflow-terminal.service`. if f9 still does nothing, check `/dev/shm/afterflow-<user>/watch.log`, `/dev/shm/afterflow-<user>/kitty.log`, and `journalctl --user -u afterflow-terminal.service`
+the service starts with your user session and reads the running compositor environment itself (hyprland, sway, niri, kde, gnome, or x11), so you do not need to import wayland variables manually. after updating, re-copy both the script and the unit, then run `systemctl --user daemon-reload`, `systemctl --user enable afterflow-terminal.service`, and `systemctl --user restart afterflow-terminal.service`. if f9 still does nothing, check `/dev/shm/afterflow-<user>/watch.log`, `/dev/shm/afterflow-<user>/kitty.log`, and `journalctl --user -u afterflow-terminal.service`; `watch.log` records the detected wayland and display values
 
 requires `kitty` on linux/proton. native windows uses powershell and needs no service. on hyprland the service also applies a floating centered window rule and raises the window above the game. on other compositors the log window still opens but placement is left to the window manager
 
@@ -85,7 +89,7 @@ export GEODE_SDK=/path/to/geode-sdk
 geode build
 ```
 
-the packaged mod ends up in `build-win/` when cross compiling from linux (`build/` on windows) and it also gets copied into the game's `geode/mods` folder automatically
+the packaged mod ends up in `build-win/` when cross compiling from linux (`build/` on windows and macos) and it also gets copied into the game's `geode/mods` folder automatically
 
 ## installation
 

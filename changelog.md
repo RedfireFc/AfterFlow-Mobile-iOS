@@ -1,3 +1,18 @@
+# v2.1.6
+
+- f6 now cycles stages from the windows powershell terminal and the linux kitty terminal. windows handles f6 directly in the log viewer; kitty maps f6 to a cycle helper and keeps the raw-key fallback.
+
+# v2.1.5
+
+- stage cycle feedback and terminal errors now go to the terminal log only. afterflow no longer shows geode notifications; open the windows powershell terminal or kitty terminal to see the selected stage.
+
+# v2.1.4
+
+- f6 now cycles stages outside a level too. a notification shows the selected stage while in a menu or editor.
+- [fix] linux/proton terminal not opening after v2.1.2 on some compositors such as cachyos/hyprland. the watcher now finds the wayland or x11 session itself instead of depending on a process named hyprland.
+- [fix] macos package now includes the native dylib, so geode no longer reports `unable to find platform binary under the name "afterflow.prsevend.dylib"`.
+- linux users must update `afterflow-terminal-watch.sh` and `afterflow-terminal.service` along with the mod.
+
 # v2.1.3
 
 - [fix] windows terminal not showing.

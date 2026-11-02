@@ -3,13 +3,14 @@
     "gd": {
         "win": "2.2081",
         "mac": "2.2081",
-        "android": "2.2081"
+        "android": "2.2081",
+        "ios": "2.2081"
     },
     "id": "afterflow.prsevend",
     "name": "Afterflow",
-    "version": "v2.3.0",
+    "version": "v2.1.6",
     "developer": "prsevend",
-    "description": "a predictive input cheat that fixes your early clicks and makes them accurate.",
+    "description": "a predictive input cheat that fixes your early clicks and makes them accurate. works on desktop and mobile (pause menu button).",
     "tags": [
         "gameplay",
         "utility",
@@ -19,156 +20,30 @@
         "terminal-title": {
             "type": "title",
             "name": "terminal",
-            "description": "terminal window options"
+            "description": "terminal window options",
+            "platforms": [
+                "win",
+                "mac"
+            ]
         },
         "terminal-enabled": {
             "type": "bool",
             "name": "enable terminal",
             "description": "allow the terminal key to open the afterflow log window",
-            "default": true
-        },
-        "gameplay-title": {
-            "type": "title",
-            "name": "gameplay",
-            "description": "how afterflow behaves in level"
-        },
-        "wave-margin": {
-            "type": "bool",
-            "name": "wave safety margin",
-            "description": "adds 1 extra tick of delay in wave when there is room. safer but can feel late. off = earliest safe click",
-            "default": false
-        },
-        "loose-ground-saves": {
-            "type": "bool",
-            "name": "loose ground saves",
-            "description": "if no delay makes the cube land safely, still accept a delay that gets it past the obstacle that would have killed the raw click. more saves, slightly less strict",
-            "default": true
-        },
-        "modes-title": {
-            "type": "title",
-            "name": "gamemodes",
-            "description": "turn afterflow on or off per gamemode. applies when you resume or enter a level"
-        },
-        "mode-cube": {
-            "type": "bool",
-            "name": "cube",
-            "description": "fix early cube clicks and releases",
-            "default": true
-        },
-        "mode-ship": {
-            "type": "bool",
-            "name": "ship",
-            "description": "fix ship / jetpack inputs (delays are kept small so the ship still feels responsive)",
-            "default": true
-        },
-        "mode-wave": {
-            "type": "bool",
-            "name": "wave",
-            "description": "fix wave turns",
-            "default": true
-        },
-        "mode-ball": {
-            "type": "bool",
-            "name": "ball",
-            "description": "fix ball clicks",
-            "default": true
-        },
-        "mode-ufo": {
-            "type": "bool",
-            "name": "ufo",
-            "description": "fix ufo flaps",
-            "default": true
-        },
-        "mode-spider": {
-            "type": "bool",
-            "name": "spider",
-            "description": "fix spider teleports",
-            "default": true
-        },
-        "mode-robot": {
-            "type": "bool",
-            "name": "robot",
-            "description": "fix robot jumps and hold length",
-            "default": true
-        },
-        "mode-swing": {
-            "type": "bool",
-            "name": "swing",
-            "description": "fix swing flips",
-            "default": true
-        },
-        "feedback-title": {
-            "type": "title",
-            "name": "feedback",
-            "description": "the small text at the top of the level"
-        },
-        "show-feedback": {
-            "type": "bool",
-            "name": "show fixed text",
-            "description": "shows a green text at the top of the level when afterflow successfully fixes a click",
-            "default": true
-        },
-        "show-cant-save": {
-            "type": "bool",
-            "name": "show can't save text",
-            "description": "shows a red text when afterflow could not save a click. turn off to only see the green fixed text",
-            "default": true
-        },
-        "feedback-units": {
-            "type": "string",
-            "name": "fixed text units",
-            "description": "how the fixed text shows the delay. ticks = 240 per second, frames = real frames at your current fps",
-            "default": "ticks",
-            "one-of": [
-                "ticks",
-                "frames",
-                "both"
+            "default": true,
+            "platforms": [
+                "win",
+                "mac"
             ]
-        },
-        "perf-title": {
-            "type": "title",
-            "name": "performance / high fps",
-            "description": "how long the prediction search may run when you click. applies when you resume or enter a level"
-        },
-        "auto-budget": {
-            "type": "bool",
-            "name": "auto search time",
-            "description": "scales the search time to your real frame time so very high fps (500, 1000+, uncapped) does not stall frames. off = always use the max search time",
-            "default": true
-        },
-        "min-search-ms": {
-            "type": "float",
-            "name": "min search time (ms)",
-            "description": "the search never gets less time than this, even at extreme fps. too low and saves start failing",
-            "default": 3.0,
-            "min": 0.5,
-            "max": 10.0,
-            "control": {
-                "input": true,
-                "slider": true
-            }
-        },
-        "max-search-ms": {
-            "type": "float",
-            "name": "max search time (ms)",
-            "description": "upper limit for the search time per click",
-            "default": 8.0,
-            "min": 1.0,
-            "max": 30.0,
-            "control": {
-                "input": true,
-                "slider": true
-            }
-        },
-        "android-title": {
-            "type": "title",
-            "name": "android",
-            "description": "android has no function keys or terminal. open the level pause menu and tap the afterflow (AF) button to pick the stage and toggle gamemodes. the keybinds and terminal settings below only do something on pc"
         },
         "keybinds-title": {
             "type": "title",
             "name": "keybinds",
-            "description": "change geodes keybinding anytime for afterflow"
+            "description": "change geodes keybinding anytime for afterflow",
+            "platforms": [
+                "win",
+                "mac"
+            ]
         },
         "keybind-stage": {
             "type": "keybind",
@@ -177,6 +52,10 @@
             "category": "gameplay",
             "default": [
                 "F6"
+            ],
+            "platforms": [
+                "win",
+                "mac"
             ]
         },
         "keybind-terminal": {
@@ -186,6 +65,10 @@
             "category": "universal",
             "default": [
                 "F9"
+            ],
+            "platforms": [
+                "win",
+                "mac"
             ]
         }
     }
