@@ -148,6 +148,7 @@ namespace {
     constexpr int CUSTOM_STAGE_LIMIT = 4;
     constexpr int CUSTOM_TICKS_MIN = 1;
     constexpr int CUSTOM_TICKS_MAX = 240;
+    constexpr int CUSTOM_TICKS_SAFE = 120;
 
     struct CustomStage {
         int ticksAll;
@@ -3810,8 +3811,14 @@ finally {
             }
 
             if (m_stageTimingLabels[2]) {
+                bool const overSafeTicks = isCustomSelected
+                    && (customStage->ticksAll > CUSTOM_TICKS_SAFE || customStage->ticksWave > CUSTOM_TICKS_SAFE);
+                m_stageTimingLabels[2]->setColor(overSafeTicks ? warningColor() : faintTextColor());
                 if (!state.isEnabled) {
                     m_stageTimingLabels[2]->setString("raw input, nothing is buffered");
+                }
+                else if (overSafeTicks) {
+                    m_stageTimingLabels[2]->setString(fmt::format("warning: over {} ticks may lag or work worse than {}", CUSTOM_TICKS_SAFE, CUSTOM_TICKS_SAFE).c_str());
                 }
                 else if (isCustomSelected) {
                     m_stageTimingLabels[2]->setString(fmt::format("tune each delay with -5 / -1 / +1 / +5, up to {} ticks", CUSTOM_TICKS_MAX).c_str());
