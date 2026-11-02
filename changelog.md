@@ -1,3 +1,9 @@
+# v2.4.5
+
+- [fix] the control panel is no longer attached to every scene, so geode's mod list and settings screens are left alone (suspected cause of mod menus crashing).
+- [fix] keybind and terminal setting hooks only run on desktop, where those settings exist.
+- [fix] ios no longer runs the in-game updater. it could replace a working build with a package that has no ios binary, and left a blocking "do not close" overlay up that could not be dismissed.
+
 # v2.4.4
 
 - **ios support**: the build workflow now has a real iOS job (it was listed in the changelog but missing from the matrix), and a failed iOS build is no longer ignored.
