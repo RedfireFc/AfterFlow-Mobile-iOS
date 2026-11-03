@@ -1,4 +1,4 @@
-name: Build Geode Mod
+name: Build Afterflow
 
 on:
   workflow_dispatch:
@@ -15,21 +15,23 @@ jobs:
       fail-fast: false
       matrix:
         config:
-#          - name: Windows
-#            os: windows-latest
-#          - name: macOS
-#            os: macos-latest
-#          - name: Android32
-#            os: ubuntu-latest
-#            target: Android32
-#          - name: Android64
-#            os: ubuntu-latest
-#            target: Android64
+          - name: Windows
+            os: windows-latest
+          # Intel runners avoid the long macOS arm64 queue. Both the
+          # universal macOS build and the iOS build work on Intel hosts.
+          - name: macOS
+            os: macos-26-intel
           - name: iOS
-            os: macos-latest
+            os: macos-26-intel
             target: iOS
             bindings-ref: 1605f500d053f8de122bf5c7dc6d17c24866e02e
             configure-args: -DSKIP_BUILDING_CODEGEN=OFF
+          - name: Android32
+            os: ubuntu-latest
+            target: Android32
+          - name: Android64
+            os: ubuntu-latest
+            target: Android64
 
     name: ${{ matrix.config.name }}
     runs-on: ${{ matrix.config.os }}
@@ -40,6 +42,8 @@ jobs:
       - name: Build the mod
         uses: geode-sdk/build-geode-mod@main
         with:
+          sdk: given
+          cli: latest
           combine: true
           target: ${{ matrix.config.target }}
           bindings-ref: ${{ matrix.config.bindings-ref }}
