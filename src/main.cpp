@@ -2441,11 +2441,12 @@ finally {
     constexpr float DISMISS_WIDTH = 30.f;
     constexpr float DISMISS_HEIGHT = 30.f;
 
-    constexpr int THEME_COUNT = 12;
-    constexpr int THEME_PER_ROW = 6;
-    constexpr float SWATCH_WIDTH = 94.f;
+    constexpr int THEME_COUNT = 14;
+    constexpr int THEME_PER_ROW = 7;
+    constexpr float SWATCH_WIDTH = 84.f;
     constexpr float SWATCH_HEIGHT = 38.f;
-    constexpr float SWATCH_GAP = 8.f;
+    constexpr float SWATCH_GAP = 6.f;
+    constexpr float SWATCH_ROW_GAP = 8.f;
     constexpr float SWATCH_X = CONTENT_X + 20.f;
     constexpr float SWATCH_Y = 272.f;
     constexpr float SETTINGS_ROW_Y[2] = { 190.f, 142.f };
@@ -2534,18 +2535,20 @@ finally {
     };
 
     UITheme const THEMES[THEME_COUNT] = {
-        { "violet", 0x7C4DFF, 0xB79CFF, 0x16161A, 0xE8E9EE },
-        { "ocean",  0x3BA3FF, 0x8FD0FF, 0x121820, 0xE6EDF5 },
-        { "mint",   0x34D399, 0x8EE8C4, 0x101A17, 0xE4F2EC },
-        { "amber",  0xFFB454, 0xFFD79B, 0x1B1712, 0xF4EDE3 },
-        { "rose",   0xFF6B8A, 0xFFB3C3, 0x1B1418, 0xF5E8EC },
-        { "mono",   0xC9CDD6, 0xFFFFFF, 0x15161A, 0xEDEEF2 },
-        { "crimson", 0xE5384B, 0xFF9AA5, 0x1A1215, 0xF5E6E8 },
-        { "sunset", 0xFF7849, 0xFFB798, 0x1B1411, 0xF5EAE4 },
-        { "gold",   0xFACC15, 0xFDE68A, 0x1A1810, 0xF6F1DC },
-        { "lime",   0xA3E635, 0xD3F59A, 0x141910, 0xEBF3E0 },
-        { "cyan",   0x22D3EE, 0x9BEAF7, 0x0F1A1C, 0xE1F3F6 },
-        { "pink",   0xF472B6, 0xFAB4D9, 0x1B1218, 0xF6E6EF },
+        { "violet",  0x7C4DFF, 0xB79CFF, 0x16161A, 0xE8E9EE },
+        { "ocean",   0x3BA3FF, 0x8FD0FF, 0x121820, 0xE6EDF5 },
+        { "mint",    0x34D399, 0x8EE8C4, 0x101A17, 0xE4F2EC },
+        { "amber",   0xFFB454, 0xFFD79B, 0x1B1712, 0xF4EDE3 },
+        { "rose",    0xFF6B8A, 0xFFB3C3, 0x1B1418, 0xF5E8EC },
+        { "mono",    0xC9CDD6, 0xFFFFFF, 0x15161A, 0xEDEEF2 },
+        { "ice",     0x67D5FF, 0xBFEAFF, 0x101820, 0xE6F1F7 },
+        { "sunset",  0xFF8A5B, 0xFFC29E, 0x1C1512, 0xF7EAE2 },
+        { "grape",   0xA855F7, 0xD5B4FF, 0x17131F, 0xEFE7F7 },
+        { "lime",    0xA3E635, 0xD9F99D, 0x141A10, 0xEAF3DF },
+        { "crimson", 0xF43F5E, 0xFF9EB0, 0x1B1115, 0xF5E4E8 },
+        { "slate",   0x94A3B8, 0xE2E8F0, 0x151A21, 0xE8EDF3 },
+        { "dark",    0xF2F3F7, 0x14161B, 0x0A0B0E, 0xF2F3F7 },
+        { "white",   0x3B82F6, 0xFFFFFF, 0xF4F2ED, 0x1C1D22 },
     };
 
     ccColor3B accentColor() {
@@ -2786,6 +2789,20 @@ finally {
         return CCRect(CONTENT_X + 20.f, CARD_TOP - 30.f, 70.f, 24.f);
     }
 
+    CCRect creditsCardRect() {
+        return CCRect(
+            (DECK_WIDTH - CREDITS_CARD_WIDTH) * 0.5f,
+            (DECK_HEIGHT - CREDITS_CARD_HEIGHT) * 0.5f,
+            CREDITS_CARD_WIDTH,
+            CREDITS_CARD_HEIGHT
+        );
+    }
+
+    CCRect creditsCloseRect() {
+        auto card = creditsCardRect();
+        return CCRect(card.getMaxX() - 46.f, card.getMaxY() - 46.f, 30.f, 30.f);
+    }
+
     CCRect configButtonRect(int index) {
         float x = (index == 0) ? CONFIG_BUTTON_X
             : (index == 1 ? CONFIG_EXPORT_X : CONFIG_EXPORT_X + CONFIG_BUTTON_WIDTH + CONFIG_BUTTON_GAP);
@@ -2797,7 +2814,7 @@ finally {
         int row = index / THEME_PER_ROW;
         return CCRect(
             SWATCH_X + static_cast<float>(col) * (SWATCH_WIDTH + SWATCH_GAP),
-            SWATCH_Y - static_cast<float>(row) * (SWATCH_HEIGHT + SWATCH_GAP),
+            SWATCH_Y - static_cast<float>(row) * (SWATCH_HEIGHT + SWATCH_ROW_GAP),
             SWATCH_WIDTH, SWATCH_HEIGHT
         );
     }
@@ -3184,7 +3201,10 @@ finally {
     // time the control panel is opened, behind a loading screen. only the menu and
     // pause button hooks (the ways to reach the panel) are enabled at launch.
     // ---------------------------------------------------------------------
-#ifdef GEODE_IS_IOS
+    // off by default: the known-good ios build (afterflow-main) enables every hook
+    // at launch. deferring them and enabling at runtime is opt-in via
+    // -DAFTERFLOW_LAZY_HOOKS=ON in the cmake configure args.
+#if defined(GEODE_IS_IOS) && defined(AFTERFLOW_LAZY_HOOKS)
     constexpr bool LAZY_HOOKS = true;
 #else
     constexpr bool LAZY_HOOKS = false;
@@ -3294,6 +3314,8 @@ finally {
         void applyTab();
         void applyChip();
         void applyTheme(int index);
+        void buildCreditsLayer();
+        void closeCreditsLayer();
         void exportConfig();
         void importConfig();
         void updateModeIcons();
@@ -3425,6 +3447,7 @@ finally {
         CCNode* m_exportButton = nullptr;
         CCNode* m_tutorialButton = nullptr;
         CCNode* m_creditsButton = nullptr;
+        CCNode* m_creditsLayer = nullptr;
         CCLabelBMFont* m_tipLabel = nullptr;
         float m_tipClock = 0.f;
         int m_tipIndex = -1;
@@ -3576,6 +3599,7 @@ finally {
         m_exportButton = nullptr;
         m_tutorialButton = nullptr;
         m_creditsButton = nullptr;
+        m_creditsLayer = nullptr;
         m_tipLabel = nullptr;
         m_tipHolder = nullptr;
         m_tipStars = nullptr;
@@ -3665,7 +3689,7 @@ finally {
             m_deck->addChild(mark, 3);
         }
 
-        auto* brandName = makeLabel("afterflow", true, 0.84f, color3(242, 243, 248));
+        auto* brandName = makeLabel("afterflow", true, 0.84f, logTextColor());
         brandName->setAnchorPoint(CCPoint(0.f, 0.5f));
         brandName->setPosition(CCPoint(MARGIN + 42.f, HEADER_Y));
         m_deck->addChild(brandName, 3);
@@ -3932,6 +3956,7 @@ finally {
         endTickEdit();
         m_pressedTarget = HitTarget::None;
         m_pressedNode = nullptr;
+        m_creditsLayer = nullptr;
         m_deck->removeAllChildrenWithCleanup(true);
         buildDeck();
         layout();
@@ -4875,6 +4900,11 @@ finally {
                 m_pressedStageSlot = -1;
                 return true;
             }
+            if (m_creditsLayer) {
+                m_pressedTarget = HitTarget::None;
+                m_pressedStageSlot = -1;
+                return true;
+            }
             if (!CCRect(0.f, 0.f, DECK_WIDTH, DECK_HEIGHT).containsPoint(deckPoint)) {
                 endTickEdit();
                 m_pressedTarget = HitTarget::Outside;
@@ -5081,6 +5111,14 @@ finally {
                         advanceTutorial();
                     }
                 }
+            }
+            return;
+        }
+
+        if (m_creditsLayer) {
+            CCPoint deckPoint = m_deck->convertToNodeSpace(touch->getLocation());
+            if (creditsCloseRect().containsPoint(deckPoint) || !creditsCardRect().containsPoint(deckPoint)) {
+                closeCreditsLayer();
             }
             return;
         }
@@ -5910,12 +5948,7 @@ finally {
         }
 
         if (target == HitTarget::Credits) {
-            FLAlertLayer::create(
-                "Credits",
-                "<cy>Sir Abraham Creakstopher the second</c> - baller.w21 made mobile support and a ton of stuff\n"
-                "<cy>Legion</c> - nyxx6_1 gave a ton of ideas",
-                "Thank you"
-            )->show();
+            buildCreditsLayer();
             return;
         }
 
@@ -8043,6 +8076,147 @@ $on_mod(Loaded) {
     say("host os: {} ({})", hostOSName(), hostOSDescription());
     checkForUpdates(true);
 }
+
+   void AfterflowOverlay::buildCreditsLayer() {
+        if (!m_deck || m_creditsLayer) {
+            return;
+        }
+        auto const card = creditsCardRect();
+        float const width = card.size.width;
+        float const height = card.size.height;
+
+        m_creditsLayer = CCNode::create();
+        m_creditsLayer->setContentSize(CCSize(DECK_WIDTH, DECK_HEIGHT));
+        m_deck->addChild(m_creditsLayer, 40);
+
+        if (auto* shade = makeDrawNode()) {
+            shade->drawRect(
+                CCRect(0.f, 0.f, DECK_WIDTH, DECK_HEIGHT),
+                color4(4, 5, 8, 196),
+                0.f,
+                color4(0, 0, 0, 0)
+            );
+            m_creditsLayer->addChild(shade, 0);
+        }
+
+        auto* sheet = CCNode::create();
+        sheet->setPosition(card.origin);
+        m_creditsLayer->addChild(sheet, 1);
+
+        if (auto* glow = makeDrawNode()) {
+            drawCurvedRect(
+                glow,
+                CCRect(-5.f, -5.f, width + 10.f, height + 10.f),
+                18.f,
+                color4(accentColor(), 18),
+                color4(0, 0, 0, 0),
+                0.f
+            );
+            sheet->addChild(glow, 0);
+        }
+
+        if (auto* back = makeDrawNode()) {
+            drawCurvedRect(
+                back,
+                CCRect(0.f, 0.f, width, height),
+                14.f,
+                color4(getUISurfaceColor(), 252),
+                color4(accentColor(), 96),
+                1.f
+            );
+            back->drawSegment(
+                CCPoint(20.f, height - 92.f),
+                CCPoint(width - 20.f, height - 92.f),
+                1.f,
+                panelTint(24)
+            );
+            sheet->addChild(back, 1);
+        }
+
+        if (auto* title = makeLabel("credits", true, 0.88f, accentColor())) {
+            title->setAnchorPoint(CCPoint(0.f, 0.5f));
+            title->setPosition(CCPoint(22.f, height - 38.f));
+            sheet->addChild(title, 2);
+        }
+        if (auto* subtitle = makeLabel("afterflow - who put it together", false, 0.44f, faintTextColor())) {
+            subtitle->setAnchorPoint(CCPoint(0.f, 0.5f));
+            subtitle->setPosition(CCPoint(22.f, height - 64.f));
+            sheet->addChild(subtitle, 2);
+        }
+
+        {
+            auto close = creditsCloseRect();
+            CCPoint local(close.getMinX() - card.getMinX(), close.getMinY() - card.getMinY());
+            auto* closeBack = makeDrawNode();
+            drawCurvedRect(closeBack, CCRect(0.f, 0.f, close.size.width, close.size.height), 6.f,
+                panelTint(10), panelTint(34), 1.f);
+            closeBack->setPosition(local);
+            sheet->addChild(closeBack, 2);
+            if (auto* x = makeLabel("x", false, 0.58f, softTextColor())) {
+                x->setPosition(CCPoint(close.size.width * 0.5f, close.size.height * 0.5f));
+                closeBack->addChild(x);
+            }
+        }
+
+        struct CreditRow {
+            char const* badge;
+            char const* name;
+            char const* role;
+        };
+        CreditRow const rows[3] = {
+            { "sv", "sevend", "creator of afterflow + original ui" },
+            { "sa", "Sir Abraham Creakstopher the second", "baller.w21 - mobile support and a ton of stuff" },
+            { "lg", "Legion", "nyxx6_1 - a ton of ideas" },
+        };
+        float const rowX = 20.f;
+        float const rowW = width - 40.f;
+        float const rowH = 54.f;
+        float const rowGap = 8.f;
+        float const rowBottom = 24.f;
+        for (int index = 0; index < 3; ++index) {
+            float const y = rowBottom + static_cast<float>(2 - index) * (rowH + rowGap);
+            CCRect const rect(rowX, y, rowW, rowH);
+            auto* rowBack = makeDrawNode();
+            if (!rowBack) {
+                continue;
+            }
+            drawCurvedRect(rowBack, rect, 9.f, panelTint(8), panelTint(22), 1.f);
+            CCPoint const badge(rect.getMinX() + 30.f, rect.getMidY());
+            rowBack->drawCircle(badge, 13.f, color4(accentColor(), 46), 1.f, color4(accentColor(), 190), 26);
+            rowBack->drawSegment(
+                CCPoint(rect.getMinX() + 0.5f, rect.getMinY() + 12.f),
+                CCPoint(rect.getMinX() + 0.5f, rect.getMaxY() - 12.f),
+                2.f,
+                color4(accentColor(), 170)
+            );
+            sheet->addChild(rowBack, 2);
+
+            if (auto* badgeLabel = makeLabel(rows[index].badge, false, 0.42f, accentColor())) {
+                badgeLabel->setPosition(badge);
+                sheet->addChild(badgeLabel, 3);
+            }
+            if (auto* name = makeLabel(rows[index].name, false, 0.6f, logTextColor())) {
+                name->setAnchorPoint(CCPoint(0.f, 0.5f));
+                name->setPosition(CCPoint(rect.getMinX() + 56.f, rect.getMidY() + 9.f));
+                fitLabelToWidth(name, rect.size.width - 76.f);
+                sheet->addChild(name, 3);
+            }
+            if (auto* role = makeLabel(rows[index].role, false, 0.4f, softTextColor())) {
+                role->setAnchorPoint(CCPoint(0.f, 0.5f));
+                role->setPosition(CCPoint(rect.getMinX() + 56.f, rect.getMidY() - 10.f));
+                fitLabelToWidth(role, rect.size.width - 76.f);
+                sheet->addChild(role, 3);
+            }
+        }
+    }
+
+    void AfterflowOverlay::closeCreditsLayer() {
+        if (m_creditsLayer) {
+            m_creditsLayer->removeFromParentAndCleanup(true);
+            m_creditsLayer = nullptr;
+        }
+    }
+
 
 class $modify(BufPlayLayer, PlayLayer) {
     static void onModify(auto& self) {
