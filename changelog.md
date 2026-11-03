@@ -1,3 +1,15 @@
+## 2.2.4
+- Ported all desktop themes to mobile.
+- Replaced the credits alert with a custom credits menu.
+- Made the Afterflow wordmark follow the active theme text color.
+
+# v2.4.8
+
+- [fix] ios build workflow now matches the known-good one: `macos-26-intel` runner with `sdk: given` and `cli: latest`.
+- [fix] `CMakeLists.txt` apple architecture block restored to the version that builds on ios; module scanning disabled.
+- [fix] lazy hook install is now off by default on ios (hooks enable at launch like the working build). opt in with `-DAFTERFLOW_LAZY_HOOKS=ON`.
+- [fix] `version.txt` synced with `mod.json` and `CMakeLists.txt`.
+
 # v2.4.6
 
 - [fix] version bump so geode re-extracts the package instead of reusing a stale unzipped copy that had no binary for the current platform.

@@ -2,22 +2,31 @@ cmake_minimum_required(VERSION 3.29)
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-# Pick Apple architectures before project(). APPLE is not defined that early, so
-# use CMAKE_SYSTEM_NAME (passed by the Geode build for iOS) and CMAKE_HOST_APPLE.
-if ("${CMAKE_SYSTEM_NAME}" STREQUAL "iOS")
-    set(CMAKE_OSX_ARCHITECTURES "arm64")
-elseif (CMAKE_HOST_APPLE AND NOT "${CMAKE_SYSTEM_NAME}" STREQUAL "Android")
-    set(CMAKE_OSX_ARCHITECTURES "arm64;x86_64")
+# Only set Apple architectures when actually targeting Apple platforms.
+if (APPLE)
+    if ("${CMAKE_SYSTEM_NAME}" STREQUAL "iOS" OR IOS)
+        set(CMAKE_OSX_ARCHITECTURES "arm64")
+    else()
+        set(CMAKE_OSX_ARCHITECTURES "arm64;x86_64")
+    endif()
 endif()
 set(CMAKE_CXX_VISIBILITY_PRESET hidden)
 
-project(Afterflow VERSION 2.4.8)
+project(Afterflow VERSION 2.2.4)
 
 # Add all source files inside src (recursively)
 file(GLOB_RECURSE SOURCES CONFIGURE_DEPENDS src/*.cpp)
 
 # Set up the mod binary
 add_library(${PROJECT_NAME} SHARED ${SOURCES})
+
+# The mod does not use C++ modules, so skip CMake's module dependency scanning.
+set_target_properties(${PROJECT_NAME} PROPERTIES CXX_SCAN_FOR_MODULES OFF)
+
+option(AFTERFLOW_LAZY_HOOKS "ios: defer gameplay hooks until the panel is first opened" OFF)
+if (AFTERFLOW_LAZY_HOOKS)
+    target_compile_definitions(${PROJECT_NAME} PRIVATE AFTERFLOW_LAZY_HOOKS=1)
+endif()
 
 # Large translation units need /bigobj on MSVC-compatible compilers.
 # These flags are intentionally not applied to other toolchains.
