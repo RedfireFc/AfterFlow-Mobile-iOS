@@ -2441,6 +2441,9 @@ finally {
     constexpr float DISMISS_WIDTH = 30.f;
     constexpr float DISMISS_HEIGHT = 30.f;
 
+    constexpr float CREDITS_CARD_WIDTH = 452.f;
+    constexpr float CREDITS_CARD_HEIGHT = 318.f;
+
     constexpr int THEME_COUNT = 14;
     constexpr int THEME_PER_ROW = 7;
     constexpr float SWATCH_WIDTH = 84.f;
@@ -2578,6 +2581,12 @@ finally {
 
     ccColor3B faintTextColor() {
         return blendTextColor(0.46f);
+    }
+
+    ccColor4F panelTint(int alpha) {
+        ccColor3B surface = getUISurfaceColor();
+        float luminance = 0.299f * surface.r + 0.587f * surface.g + 0.114f * surface.b;
+        return luminance > 145.f ? color4(0, 0, 0, alpha) : color4(255, 255, 255, alpha);
     }
 
     char const* displayFont() {
