@@ -1362,6 +1362,10 @@ finally {
     }
 
     std::string keybindList(std::string_view settingName) {
+        // keybind settings are desktop-only in mod.json, so they do not exist on ios/android
+        if (isMobileHost()) {
+            return "unavailable";
+        }
         auto keybinds = Mod::get()->getSettingValue<std::vector<Keybind>>(settingName);
         if (keybinds.empty()) {
             return "unbound";
@@ -1702,6 +1706,11 @@ finally {
     }
 
     void startUpdateDownload(std::string const& latestVersion) {
+#ifdef GEODE_IS_IOS
+        // the upstream release has no ios binary: installing it breaks the mod
+        (void)latestVersion;
+        return;
+#else
         if (updateOverlay.isActive) {
             return;
         }
@@ -1777,6 +1786,7 @@ finally {
                 });
             }
         );
+#endif
     }
 
     struct UpdateNotice {
@@ -1787,6 +1797,9 @@ finally {
     } pendingUpdateNotice;
 
     bool showUpdatePopup() {
+#ifdef GEODE_IS_IOS
+        return false;
+#endif
         if (pendingUpdateNotice.isShown || pendingUpdateNotice.urlText.empty()) {
             return false;
         }
@@ -1817,6 +1830,10 @@ finally {
     }
 
     void checkForUpdates(bool isLoud) {
+#ifdef GEODE_IS_IOS
+        (void)isLoud;
+        return;
+#endif
         // the upstream package may have no ios binary, and installing it would replace
         // a working build with one that fails to load, so ios never self-updates
         if (hostOS() == HostOS::IOS) {
